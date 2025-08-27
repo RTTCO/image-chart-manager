@@ -9,6 +9,8 @@ class ImageChartManager {
         this.currentCategory = 'all';
         this.currentSearch = '';
         this.categories = [];
+        this.selectedImages = new Set();
+        this.isEditingCategory = false;
         this.init();
     }
 
@@ -66,6 +68,13 @@ class ImageChartManager {
         document.getElementById('addCategoryBtn')?.addEventListener('click', () => this.showCategoryModal());
         document.getElementById('cancelCategoryBtn')?.addEventListener('click', () => this.hideCategoryModal());
         document.getElementById('categoryForm')?.addEventListener('submit', (e) => this.handleCategorySubmit(e));
+
+        // Bulk selection
+        document.getElementById('selectAllCheckbox')?.addEventListener('change', (e) => this.handleSelectAll(e));
+        document.getElementById('selectAllBtn')?.addEventListener('click', () => this.selectAllImages());
+        document.getElementById('deselectAllBtn')?.addEventListener('click', () => this.deselectAllImages());
+        document.getElementById('bulkDownloadBtn')?.addEventListener('click', () => this.bulkDownload());
+        document.getElementById('bulkDeleteBtn')?.addEventListener('click', () => this.bulkDelete());
 
         // Pagination
         document.getElementById('prevBtn')?.addEventListener('click', () => this.goToPage(this.currentPage - 1));
@@ -243,7 +252,7 @@ class ImageChartManager {
         if (images.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center py-8 text-gray-500">
+                    <td colspan="8" class="text-center py-8 text-gray-500">
                         <i class="fas fa-image text-3xl mb-2"></i>
                         <p>No images found. Try adjusting your filters or upload some images!</p>
                     </td>
@@ -254,6 +263,9 @@ class ImageChartManager {
 
         tbody.innerHTML = images.map((image, index) => `
             <tr data-row-id="${image.id}">
+                <td class="text-center">
+                    <input type="checkbox" class="image-checkbox" data-image-id="${image.id}" onchange="imageManager.updateSelection()">
+                </td>
                 <td class="text-center font-medium compact-info">${(this.currentPage - 1) * this.itemsPerPage + index + 1}</td>
                 <td class="image-cell">
                     <img src="/api/images/${image.id}/file" 
@@ -536,20 +548,35 @@ class ImageChartManager {
 
         this.categories.forEach(category => {
             html += `
-                <div class="category-item ${this.currentCategory === category.name ? 'active' : ''}" 
-                     data-category="${category.name}">
-                    <i class="fas fa-folder mr-2" style="color: ${category.color}"></i>
-                    <span>${category.name}</span>
-                    <span class="count">${category.image_count || 0}</span>
+                <div class="category-item-wrapper">
+                    <div class="category-item ${this.currentCategory === category.name ? 'active' : ''}" 
+                         data-category="${category.name}">
+                        <i class="fas fa-folder mr-2" style="color: ${category.color}"></i>
+                        <span class="flex-1">${category.name}</span>
+                        <span class="count">${category.image_count || 0}</span>
+                        <div class="category-actions ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onclick="imageManager.showCategoryModal(${category.id})" 
+                                    class="text-xs text-blue-600 hover:text-blue-800 p-1" title="Edit">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button onclick="imageManager.deleteCategory(${category.id})" 
+                                    class="text-xs text-red-600 hover:text-red-800 p-1" title="Delete">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             `;
         });
 
         categoryList.innerHTML = html;
 
-        // Add click events
+        // Add click events for category selection (not on action buttons)
         categoryList.querySelectorAll('.category-item').forEach(item => {
             item.addEventListener('click', (e) => {
+                // Don't trigger if clicking on action buttons
+                if (e.target.closest('.category-actions')) return;
+                
                 const category = e.currentTarget.dataset.category;
                 this.selectCategory(category);
             });
@@ -702,6 +729,284 @@ class ImageChartManager {
         if (page >= 1 && page <= this.totalPages) {
             this.currentPage = page;
             this.loadImages();
+        }
+    }
+
+    // Bulk Selection Methods
+    updateSelection() {
+        const checkboxes = document.querySelectorAll('.image-checkbox:checked');
+        this.selectedImages.clear();
+        
+        checkboxes.forEach(cb => {
+            this.selectedImages.add(parseInt(cb.dataset.imageId));
+        });
+        
+        this.updateBulkActionsBar();
+    }
+
+    updateBulkActionsBar() {
+        const bar = document.getElementById('bulkActionsBar');
+        const count = document.getElementById('selectionCount');
+        const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+        
+        if (this.selectedImages.size > 0) {
+            bar.classList.remove('hidden');
+            count.textContent = `${this.selectedImages.size} image${this.selectedImages.size !== 1 ? 's' : ''} selected`;
+        } else {
+            bar.classList.add('hidden');
+        }
+
+        // Update select all checkbox state
+        const allCheckboxes = document.querySelectorAll('.image-checkbox');
+        const checkedBoxes = document.querySelectorAll('.image-checkbox:checked');
+        
+        if (checkedBoxes.length === 0) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = false;
+        } else if (checkedBoxes.length === allCheckboxes.length) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = true;
+        } else {
+            selectAllCheckbox.indeterminate = true;
+        }
+    }
+
+    handleSelectAll(e) {
+        const checkboxes = document.querySelectorAll('.image-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = e.target.checked;
+        });
+        this.updateSelection();
+    }
+
+    selectAllImages() {
+        const checkboxes = document.querySelectorAll('.image-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = true;
+        });
+        this.updateSelection();
+    }
+
+    deselectAllImages() {
+        const checkboxes = document.querySelectorAll('.image-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = false;
+        });
+        this.updateSelection();
+    }
+
+    async bulkDownload() {
+        if (this.selectedImages.size === 0) {
+            this.showMessage('Please select images to download', 'error');
+            return;
+        }
+
+        try {
+            const imageIds = Array.from(this.selectedImages);
+            this.showMessage(`Preparing ${imageIds.length} images for download...`, 'info');
+            
+            const response = await axios.post('/api/images/bulk-download', {
+                imageIds: imageIds
+            });
+
+            if (response.data.success) {
+                this.createZipDownload(response.data.images);
+                this.showMessage('Download started successfully!', 'success');
+            } else {
+                this.showMessage(response.data.error || 'Failed to prepare download', 'error');
+            }
+        } catch (error) {
+            console.error('Bulk download error:', error);
+            this.showMessage('Failed to download images', 'error');
+        }
+    }
+
+    async createZipDownload(images) {
+        try {
+            if (typeof JSZip === 'undefined') {
+                // Fallback: individual downloads
+                this.fallbackIndividualDownloads(images);
+                return;
+            }
+
+            const zip = new JSZip();
+            
+            // Add each image to the zip
+            images.forEach(image => {
+                // Convert base64 to binary
+                const binaryString = atob(image.data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                zip.file(image.name, bytes);
+            });
+
+            // Generate zip file
+            const timestamp = new Date().toISOString().split('T')[0];
+            const zipBlob = await zip.generateAsync({type: 'blob'});
+            
+            // Download zip file
+            if (typeof saveAs !== 'undefined') {
+                saveAs(zipBlob, `images_${timestamp}.zip`);
+            } else {
+                // Fallback download
+                const url = URL.createObjectURL(zipBlob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `images_${timestamp}.zip`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            }
+        } catch (error) {
+            console.error('Zip creation error:', error);
+            this.fallbackIndividualDownloads(images);
+        }
+    }
+
+    fallbackIndividualDownloads(images) {
+        this.showMessage(`Creating ${images.length} individual downloads...`, 'info');
+        images.forEach((image, index) => {
+            setTimeout(() => {
+                const link = document.createElement('a');
+                link.href = `data:${image.type};base64,${image.data}`;
+                link.download = image.name;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }, index * 200); // Stagger downloads
+        });
+    }
+
+    async bulkDelete() {
+        if (this.selectedImages.size === 0) {
+            this.showMessage('Please select images to delete', 'error');
+            return;
+        }
+
+        const count = this.selectedImages.size;
+        if (!confirm(`⚠️ Delete ${count} image${count !== 1 ? 's' : ''}?\n\nThis will permanently delete the selected images and cannot be undone.\n\nAre you sure you want to continue?`)) {
+            return;
+        }
+
+        try {
+            const imageIds = Array.from(this.selectedImages);
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const imageId of imageIds) {
+                try {
+                    const response = await axios.delete(`/api/images/${imageId}`);
+                    if (response.data.success) {
+                        successCount++;
+                    } else {
+                        errorCount++;
+                    }
+                } catch (error) {
+                    errorCount++;
+                }
+            }
+
+            if (successCount > 0) {
+                this.showMessage(`Successfully deleted ${successCount} image${successCount !== 1 ? 's' : ''}${errorCount > 0 ? `, ${errorCount} failed` : ''}`, successCount === imageIds.length ? 'success' : 'info');
+                this.selectedImages.clear();
+                this.loadImages();
+                this.loadCategories();
+            } else {
+                this.showMessage('Failed to delete images', 'error');
+            }
+        } catch (error) {
+            console.error('Bulk delete error:', error);
+            this.showMessage('Failed to delete images', 'error');
+        }
+    }
+
+    // Category Management Methods
+    showCategoryModal(categoryId = null) {
+        this.isEditingCategory = !!categoryId;
+        const modal = document.getElementById('categoryModal');
+        const title = document.getElementById('categoryModalTitle');
+        const submitBtn = document.getElementById('categorySubmitBtn');
+        
+        if (this.isEditingCategory) {
+            const category = this.categories.find(cat => cat.id == categoryId);
+            if (category) {
+                title.textContent = 'Edit Category';
+                submitBtn.textContent = 'Update Category';
+                document.getElementById('categoryId').value = category.id;
+                document.getElementById('categoryName').value = category.name;
+                document.getElementById('categoryColor').value = category.color;
+                document.getElementById('categoryDescription').value = category.description || '';
+            }
+        } else {
+            title.textContent = 'Add New Category';
+            submitBtn.textContent = 'Add Category';
+            document.getElementById('categoryForm').reset();
+            document.getElementById('categoryId').value = '';
+        }
+        
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    async handleCategorySubmit(e) {
+        e.preventDefault();
+        
+        const id = document.getElementById('categoryId').value;
+        const name = document.getElementById('categoryName').value.trim();
+        const color = document.getElementById('categoryColor').value;
+        const description = document.getElementById('categoryDescription').value.trim();
+
+        try {
+            let response;
+            if (this.isEditingCategory && id) {
+                response = await axios.put(`/api/categories/${id}`, {
+                    name, color, description
+                });
+            } else {
+                response = await axios.post('/api/categories', {
+                    name, color, description
+                });
+            }
+
+            if (response.data.success) {
+                this.showMessage(`Category ${this.isEditingCategory ? 'updated' : 'created'} successfully!`, 'success');
+                this.hideCategoryModal();
+                this.loadCategories();
+            } else {
+                this.showMessage(response.data.error || `Failed to ${this.isEditingCategory ? 'update' : 'create'} category`, 'error');
+            }
+        } catch (error) {
+            console.error('Category operation error:', error);
+            this.showMessage(`Failed to ${this.isEditingCategory ? 'update' : 'create'} category`, 'error');
+        }
+    }
+
+    async deleteCategory(categoryId) {
+        const category = this.categories.find(cat => cat.id == categoryId);
+        if (!category) return;
+
+        if (!confirm(`⚠️ Delete category "${category.name}"?\n\nThis action cannot be undone. Images in this category will become uncategorized.\n\nAre you sure?`)) {
+            return;
+        }
+
+        try {
+            const response = await axios.delete(`/api/categories/${categoryId}`);
+            if (response.data.success) {
+                this.showMessage('Category deleted successfully', 'success');
+                this.loadCategories();
+                if (this.currentCategory === category.name) {
+                    this.selectCategory('all');
+                }
+            } else {
+                this.showMessage(response.data.error || 'Failed to delete category', 'error');
+            }
+        } catch (error) {
+            console.error('Delete category error:', error);
+            this.showMessage('Failed to delete category', 'error');
         }
     }
 

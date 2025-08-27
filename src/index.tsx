@@ -62,6 +62,88 @@ app.post('/api/categories', async (c) => {
   }
 })
 
+// Update category
+app.put('/api/categories/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const { name, color, description } = await c.req.json()
+    
+    await c.env.DB.prepare(`
+      UPDATE categories SET name = ?, color = ?, description = ? WHERE id = ?
+    `).bind(name, color, description, id).run()
+    
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Update category error:', error)
+    return c.json({ success: false, error: 'Failed to update category' }, 500)
+  }
+})
+
+// Delete category
+app.delete('/api/categories/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    
+    // Check if category has images
+    const { results: imageCheck } = await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM image_entries WHERE category_id = ?
+    `).bind(id).all()
+    
+    const imageCount = (imageCheck[0] as any)?.count || 0
+    if (imageCount > 0) {
+      return c.json({ 
+        success: false, 
+        error: `Cannot delete category with ${imageCount} images. Move or delete images first.` 
+      }, 400)
+    }
+    
+    await c.env.DB.prepare(`
+      DELETE FROM categories WHERE id = ?
+    `).bind(id).run()
+    
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Delete category error:', error)
+    return c.json({ success: false, error: 'Failed to delete category' }, 500)
+  }
+})
+
+// Bulk download images
+app.post('/api/images/bulk-download', async (c) => {
+  try {
+    const { imageIds } = await c.req.json()
+    
+    if (!imageIds || imageIds.length === 0) {
+      return c.json({ success: false, error: 'No images selected' }, 400)
+    }
+    
+    // Get all selected images
+    const placeholders = imageIds.map(() => '?').join(',')
+    const { results } = await c.env.DB.prepare(`
+      SELECT id, original_name, image_data, mime_type
+      FROM image_entries 
+      WHERE id IN (${placeholders})
+    `).bind(...imageIds).all()
+    
+    if (results.length === 0) {
+      return c.json({ success: false, error: 'No images found' }, 404)
+    }
+    
+    // Create a simple JSON response with base64 data for client-side zip creation
+    const images = results.map(image => ({
+      id: (image as any).id,
+      name: (image as any).original_name,
+      data: (image as any).image_data,
+      type: (image as any).mime_type
+    }))
+    
+    return c.json({ success: true, images })
+  } catch (error) {
+    console.error('Bulk download error:', error)
+    return c.json({ success: false, error: 'Failed to prepare download' }, 500)
+  }
+})
+
 // Get all image entries with categories
 app.get('/api/images', async (c) => {
   try {
@@ -577,6 +659,45 @@ app.get('/', (c) => {
             color: white;
             border-color: #3b82f6;
           }
+          
+          /* Category management styles */
+          .category-item-wrapper {
+            position: relative;
+          }
+          .category-item-wrapper:hover .category-actions {
+            opacity: 1 !important;
+          }
+          .category-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+          }
+          .category-actions {
+            display: flex;
+            gap: 2px;
+            opacity: 0;
+            transition: opacity 0.2s;
+          }
+          .category-actions button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 3px;
+          }
+          .category-actions button:hover {
+            background: rgba(0,0,0,0.1);
+          }
+          
+          /* Bulk selection styles */
+          .bulk-actions-bar {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+          }
           .upload-area {
             border: 2px dashed #d1d5db;
             border-radius: 8px;
@@ -731,10 +852,34 @@ app.get('/', (c) => {
                     </button>
                 </div>
 
+                <!-- Bulk Actions Bar -->
+                <div id="bulkActionsBar" class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 hidden">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4">
+                            <span id="selectionCount" class="text-sm font-medium text-blue-800">0 images selected</span>
+                            <button id="selectAllBtn" class="text-sm text-blue-600 hover:text-blue-800 underline">Select All</button>
+                            <button id="deselectAllBtn" class="text-sm text-blue-600 hover:text-blue-800 underline">Deselect All</button>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button id="bulkDownloadBtn" class="bg-blue-600 text-white px-4 py-2 text-sm rounded-lg hover:bg-blue-700 transition-colors">
+                                <i class="fas fa-download mr-2"></i>
+                                Download Selected
+                            </button>
+                            <button id="bulkDeleteBtn" class="bg-red-600 text-white px-4 py-2 text-sm rounded-lg hover:bg-red-700 transition-colors">
+                                <i class="fas fa-trash mr-2"></i>
+                                Delete Selected
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="overflow-auto" style="max-height: 70vh;">
                     <table class="excel-table">
                         <thead>
                             <tr>
+                                <th style="width: 40px;">
+                                    <input type="checkbox" id="selectAllCheckbox" title="Select All">
+                                </th>
                                 <th style="width: 30px;">#</th>
                                 <th style="width: 80px;">Image</th>
                                 <th style="width: auto;">Description</th>
@@ -746,7 +891,7 @@ app.get('/', (c) => {
                         </thead>
                         <tbody id="imageTableBody">
                             <tr>
-                                <td colspan="7" class="text-center py-8 text-gray-500">
+                                <td colspan="8" class="text-center py-8 text-gray-500">
                                     <i class="fas fa-image text-3xl mb-2"></i>
                                     <p>No images uploaded yet. Upload some images to get started!</p>
                                 </td>
@@ -777,11 +922,12 @@ app.get('/', (c) => {
             </div>
         </div>
 
-        <!-- Add Category Modal -->
+        <!-- Add/Edit Category Modal -->
         <div id="categoryModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
             <div class="bg-white rounded-lg p-6 w-96">
-                <h3 class="text-lg font-semibold mb-4">Add New Category</h3>
+                <h3 id="categoryModalTitle" class="text-lg font-semibold mb-4">Add New Category</h3>
                 <form id="categoryForm">
+                    <input type="hidden" id="categoryId">
                     <div class="mb-4">
                         <label class="block text-sm font-medium mb-2">Category Name</label>
                         <input type="text" id="categoryName" class="w-full px-3 py-2 border border-gray-300 rounded-md" required>
@@ -795,7 +941,7 @@ app.get('/', (c) => {
                         <textarea id="categoryDescription" class="w-full px-3 py-2 border border-gray-300 rounded-md h-20"></textarea>
                     </div>
                     <div class="flex gap-2">
-                        <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700">
+                        <button type="submit" id="categorySubmitBtn" class="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700">
                             Add Category
                         </button>
                         <button type="button" id="cancelCategoryBtn" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-md hover:bg-gray-400">
@@ -825,6 +971,8 @@ app.get('/', (c) => {
         </div>
 
         <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
         <script src="/static/app.js"></script>
     </body>
     </html>
