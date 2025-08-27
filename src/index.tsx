@@ -303,6 +303,60 @@ app.get('/', (c) => {
             outline-offset: -2px;
             background: white;
           }
+          .description-cell.editing {
+            background-color: #eff6ff;
+          }
+          .description-cell.saving {
+            background-color: #f0fdf4;
+          }
+          .description-cell.error {
+            background-color: #fef2f2;
+          }
+          .action-buttons {
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+          }
+          .action-btn {
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+          }
+          .action-btn.edit {
+            background: #3b82f6;
+            color: white;
+          }
+          .action-btn.edit:hover {
+            background: #2563eb;
+          }
+          .action-btn.delete {
+            background: #ef4444;
+            color: white;
+          }
+          .action-btn.delete:hover {
+            background: #dc2626;
+          }
+          .action-btn.save {
+            background: #10b981;
+            color: white;
+          }
+          .action-btn.save:hover {
+            background: #059669;
+          }
+          .action-btn.cancel {
+            background: #6b7280;
+            color: white;
+          }
+          .action-btn.cancel:hover {
+            background: #4b5563;
+          }
+          .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+          }
           .upload-area {
             border: 2px dashed #d1d5db;
             border-radius: 8px;
@@ -370,10 +424,16 @@ app.get('/', (c) => {
             <!-- Image Chart Table -->
             <div class="bg-white rounded-lg shadow-md p-6">
                 <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold">
-                        <i class="fas fa-table mr-2"></i>
-                        Image Chart
-                    </h2>
+                    <div>
+                        <h2 class="text-xl font-semibold">
+                            <i class="fas fa-table mr-2"></i>
+                            Image Chart
+                        </h2>
+                        <p class="text-sm text-gray-600 mt-1">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Click descriptions to edit • Right-click images for options • Use Ctrl+Enter to save, Esc to cancel
+                        </p>
+                    </div>
                     <button id="refreshBtn" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
                         <i class="fas fa-sync-alt mr-2"></i>
                         Refresh
@@ -389,11 +449,12 @@ app.get('/', (c) => {
                                 <th style="width: auto;">Description</th>
                                 <th style="width: 120px;">File Info</th>
                                 <th style="width: 150px;">Upload Date</th>
+                                <th style="width: 100px;">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="imageTableBody">
                             <tr>
-                                <td colspan="5" class="text-center py-8 text-gray-500">
+                                <td colspan="6" class="text-center py-8 text-gray-500">
                                     <i class="fas fa-image text-3xl mb-2"></i>
                                     <p>No images uploaded yet. Upload some images to get started!</p>
                                 </td>
@@ -407,13 +468,17 @@ app.get('/', (c) => {
         <!-- Context Menu -->
         <div id="contextMenu" class="context-menu">
             <ul>
+                <li id="editItem">
+                    <i class="fas fa-edit mr-2"></i>
+                    Edit Description
+                </li>
                 <li id="downloadItem">
                     <i class="fas fa-download mr-2"></i>
-                    Download
+                    Download Image
                 </li>
-                <li id="deleteItem">
-                    <i class="fas fa-trash mr-2"></i>
-                    Delete
+                <li id="deleteRowItem">
+                    <i class="fas fa-trash-alt mr-2"></i>
+                    Delete Row
                 </li>
             </ul>
         </div>

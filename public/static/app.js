@@ -44,8 +44,9 @@ class ImageChartManager {
         // Context menu
         document.addEventListener('contextmenu', (e) => this.handleContextMenu(e));
         document.addEventListener('click', () => this.hideContextMenu());
+        document.getElementById('editItem').addEventListener('click', () => this.editDescriptionFromContext());
         document.getElementById('downloadItem').addEventListener('click', () => this.downloadImage());
-        document.getElementById('deleteItem').addEventListener('click', () => this.deleteImage());
+        document.getElementById('deleteRowItem').addEventListener('click', () => this.deleteRowFromContext());
     }
 
     handleFileSelect(files) {
@@ -212,7 +213,7 @@ class ImageChartManager {
         if (images.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="5" class="text-center py-8 text-gray-500">
+                    <td colspan="6" class="text-center py-8 text-gray-500">
                         <i class="fas fa-image text-3xl mb-2"></i>
                         <p>No images uploaded yet. Upload some images to get started!</p>
                     </td>
@@ -222,7 +223,7 @@ class ImageChartManager {
         }
 
         tbody.innerHTML = images.map((image, index) => `
-            <tr>
+            <tr data-row-id="${image.id}">
                 <td class="text-center font-medium">${index + 1}</td>
                 <td class="image-cell">
                     <img src="/api/images/${image.id}/file" 
@@ -231,9 +232,13 @@ class ImageChartManager {
                          data-image-id="${image.id}"
                          class="hover:scale-105 transition-transform">
                 </td>
-                <td class="description-cell">
-                    <textarea onblur="imageManager.updateDescription(${image.id}, this.value)"
-                              placeholder="Enter description...">${image.description || ''}</textarea>
+                <td class="description-cell" data-image-id="${image.id}">
+                    <textarea data-image-id="${image.id}" 
+                              data-original-value="${this.escapeHtml(image.description || '')}"
+                              placeholder="Enter description..."
+                              onkeydown="imageManager.handleTextareaKeydown(event, ${image.id})"
+                              onfocus="imageManager.startEditing(${image.id})"
+                              onblur="imageManager.saveDescription(${image.id}, this)">${image.description || ''}</textarea>
                 </td>
                 <td class="text-sm">
                     <div class="space-y-1">
@@ -245,22 +250,150 @@ class ImageChartManager {
                 <td class="text-sm">
                     ${new Date(image.upload_date).toLocaleString()}
                 </td>
+                <td class="action-buttons">
+                    <button class="action-btn edit" onclick="imageManager.editDescription(${image.id})" title="Edit Description">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="action-btn delete" onclick="imageManager.deleteRow(${image.id})" title="Delete Row">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
             </tr>
         `).join('');
     }
 
-    async updateDescription(imageId, description) {
+    startEditing(imageId) {
+        const cell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        if (cell) {
+            cell.classList.add('editing');
+            cell.classList.remove('saving', 'error');
+        }
+    }
+
+    handleTextareaKeydown(event, imageId) {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            // Ctrl/Cmd + Enter to save
+            event.preventDefault();
+            const textarea = event.target;
+            this.saveDescription(imageId, textarea);
+            textarea.blur();
+        } else if (event.key === 'Escape') {
+            // Escape to cancel
+            event.preventDefault();
+            const textarea = event.target;
+            const originalValue = textarea.dataset.originalValue || '';
+            textarea.value = originalValue;
+            this.cancelEditing(imageId);
+            textarea.blur();
+        }
+    }
+
+    async saveDescription(imageId, textarea) {
+        const cell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const description = textarea.value.trim();
+        
         try {
+            cell.classList.remove('editing');
+            cell.classList.add('saving');
+            
             const response = await axios.put(`/api/images/${imageId}`, {
-                description: description.trim()
+                description: description
             });
 
-            if (!response.data.success) {
-                this.showMessage('Failed to update description', 'error');
+            if (response.data.success) {
+                // Update the original value for future cancellations
+                textarea.dataset.originalValue = this.escapeHtml(description);
+                cell.classList.remove('saving');
+                
+                // Show brief success feedback
+                setTimeout(() => {
+                    cell.classList.remove('saving');
+                }, 500);
+            } else {
+                throw new Error(response.data.error || 'Failed to update');
             }
         } catch (error) {
             console.error('Update description error:', error);
-            this.showMessage('Failed to update description', 'error');
+            cell.classList.remove('saving');
+            cell.classList.add('error');
+            
+            // Reset to original value on error
+            const originalValue = textarea.dataset.originalValue || '';
+            textarea.value = originalValue;
+            
+            this.showMessage('Failed to update description. Changes reverted.', 'error');
+            
+            // Remove error state after 3 seconds
+            setTimeout(() => {
+                cell.classList.remove('error');
+            }, 3000);
+        }
+    }
+
+    cancelEditing(imageId) {
+        const cell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        if (cell) {
+            cell.classList.remove('editing', 'saving', 'error');
+        }
+    }
+
+    editDescription(imageId) {
+        const textarea = document.querySelector(`textarea[data-image-id="${imageId}"]`);
+        if (textarea) {
+            textarea.focus();
+            textarea.select();
+        }
+    }
+
+    async deleteRow(imageId) {
+        if (!confirm('⚠️ Delete entire row?\n\nThis will permanently delete both the image and its description. This action cannot be undone.\n\nAre you sure you want to continue?')) {
+            return;
+        }
+
+        const row = document.querySelector(`tr[data-row-id="${imageId}"]`);
+        
+        try {
+            // Add visual feedback
+            if (row) {
+                row.style.opacity = '0.5';
+                row.style.pointerEvents = 'none';
+            }
+
+            const response = await axios.delete(`/api/images/${imageId}`);
+            
+            if (response.data.success) {
+                this.showMessage('Row deleted successfully', 'success');
+                // Remove row with animation
+                if (row) {
+                    row.style.transition = 'all 0.3s ease';
+                    row.style.transform = 'translateX(-100%)';
+                    row.style.opacity = '0';
+                    
+                    setTimeout(() => {
+                        this.loadImages(); // Reload table to renumber rows
+                    }, 300);
+                }
+            } else {
+                throw new Error(response.data.error || 'Failed to delete');
+            }
+        } catch (error) {
+            console.error('Delete row error:', error);
+            
+            // Restore row visual state on error
+            if (row) {
+                row.style.opacity = '1';
+                row.style.pointerEvents = 'auto';
+            }
+            
+            this.showMessage('Failed to delete row. Please try again.', 'error');
+        }
+    }
+
+    // Legacy method for backward compatibility
+    async updateDescription(imageId, description) {
+        const textarea = document.querySelector(`textarea[data-image-id="${imageId}"]`);
+        if (textarea) {
+            await this.saveDescription(imageId, textarea);
         }
     }
 
@@ -295,6 +428,13 @@ class ImageChartManager {
         this.contextMenuTarget = null;
     }
 
+    editDescriptionFromContext() {
+        if (this.contextMenuTarget) {
+            this.editDescription(this.contextMenuTarget);
+        }
+        this.hideContextMenu();
+    }
+
     downloadImage() {
         if (this.contextMenuTarget) {
             window.open(`/api/images/${this.contextMenuTarget}/download`, '_blank');
@@ -302,28 +442,17 @@ class ImageChartManager {
         this.hideContextMenu();
     }
 
+    async deleteRowFromContext() {
+        if (this.contextMenuTarget) {
+            await this.deleteRow(this.contextMenuTarget);
+        }
+        this.hideContextMenu();
+    }
+
+    // Legacy method - kept for backward compatibility
     async deleteImage() {
-        if (!this.contextMenuTarget) {
-            this.hideContextMenu();
-            return;
-        }
-
-        if (!confirm('Are you sure you want to delete this image? This action cannot be undone.')) {
-            this.hideContextMenu();
-            return;
-        }
-
-        try {
-            const response = await axios.delete(`/api/images/${this.contextMenuTarget}`);
-            if (response.data.success) {
-                this.showMessage('Image deleted successfully', 'success');
-                this.loadImages();
-            } else {
-                this.showMessage(response.data.error || 'Failed to delete image', 'error');
-            }
-        } catch (error) {
-            console.error('Delete error:', error);
-            this.showMessage('Failed to delete image', 'error');
+        if (this.contextMenuTarget) {
+            await this.deleteRow(this.contextMenuTarget);
         }
         this.hideContextMenu();
     }
@@ -338,6 +467,12 @@ class ImageChartManager {
 
     truncateString(str, length) {
         return str.length > length ? str.substring(0, length) + '...' : str;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     showMessage(message, type = 'info') {
