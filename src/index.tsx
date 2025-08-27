@@ -17,14 +17,111 @@ app.use('/static/*', serveStatic({ root: './public' }))
 
 // API Routes
 
-// Get all image entries
-app.get('/api/images', async (c) => {
+// Get all categories
+app.get('/api/categories', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(
-      'SELECT * FROM image_entries ORDER BY row_order ASC, upload_date ASC'
-    ).all()
+    const { results } = await c.env.DB.prepare(`
+      SELECT 
+        c.*,
+        COUNT(ie.id) as image_count
+      FROM categories c
+      LEFT JOIN image_entries ie ON c.id = ie.category_id
+      GROUP BY c.id
+      ORDER BY c.name ASC
+    `).all()
     
     return c.json({ success: true, data: results })
+  } catch (error) {
+    console.error('Error fetching categories:', error)
+    return c.json({ success: false, error: 'Failed to fetch categories' }, 500)
+  }
+})
+
+// Create new category
+app.post('/api/categories', async (c) => {
+  try {
+    const { name, color = '#3b82f6', description = '' } = await c.req.json()
+    
+    const result = await c.env.DB.prepare(`
+      INSERT INTO categories (name, color, description)
+      VALUES (?, ?, ?)
+    `).bind(name, color, description).run()
+    
+    return c.json({ 
+      success: true, 
+      data: { 
+        id: result.meta.last_row_id,
+        name,
+        color,
+        description
+      }
+    })
+  } catch (error) {
+    console.error('Create category error:', error)
+    return c.json({ success: false, error: 'Failed to create category' }, 500)
+  }
+})
+
+// Get all image entries with categories
+app.get('/api/images', async (c) => {
+  try {
+    const page = parseInt(c.req.query('page') || '1')
+    const limit = parseInt(c.req.query('limit') || '50')
+    const category = c.req.query('category')
+    const search = c.req.query('search')
+    const offset = (page - 1) * limit
+
+    let query = `
+      SELECT 
+        ie.*,
+        c.name as category_name,
+        c.color as category_color
+      FROM image_entries ie
+      LEFT JOIN categories c ON ie.category_id = c.id
+    `
+    
+    let conditions = []
+    let params = []
+    
+    if (category && category !== 'all') {
+      conditions.push('c.name = ?')
+      params.push(category)
+    }
+    
+    if (search) {
+      conditions.push('(ie.description LIKE ? OR ie.original_name LIKE ?)')
+      params.push(`%${search}%`, `%${search}%`)
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ')
+    }
+    
+    query += ' ORDER BY ie.upload_date DESC LIMIT ? OFFSET ?'
+    params.push(limit, offset)
+    
+    const { results } = await c.env.DB.prepare(query).bind(...params).all()
+    
+    // Get total count for pagination
+    let countQuery = 'SELECT COUNT(*) as total FROM image_entries ie'
+    if (category && category !== 'all') {
+      countQuery += ' LEFT JOIN categories c ON ie.category_id = c.id WHERE c.name = ?'
+    }
+    
+    const countParams = category && category !== 'all' ? [category] : []
+    const { results: countResults } = await c.env.DB.prepare(countQuery).bind(...countParams).all()
+    const total = (countResults[0] as any)?.total || 0
+    
+    return c.json({ 
+      success: true, 
+      data: results,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    })
   } catch (error) {
     console.error('Error fetching images:', error)
     return c.json({ success: false, error: 'Failed to fetch images' }, 500)
@@ -94,15 +191,38 @@ app.post('/api/upload', async (c) => {
   }
 })
 
-// Update image description
+// Update image description and category
 app.put('/api/images/:id', async (c) => {
   try {
     const id = c.req.param('id')
-    const { description } = await c.req.json()
+    const { description, category_id, status } = await c.req.json()
 
-    await c.env.DB.prepare(
-      'UPDATE image_entries SET description = ? WHERE id = ?'
-    ).bind(description, id).run()
+    let updateFields = []
+    let params = []
+    
+    if (description !== undefined) {
+      updateFields.push('description = ?')
+      params.push(description)
+    }
+    
+    if (category_id !== undefined) {
+      updateFields.push('category_id = ?')
+      params.push(category_id)
+    }
+    
+    if (status !== undefined) {
+      updateFields.push('status = ?')
+      params.push(status)
+    }
+    
+    if (updateFields.length === 0) {
+      return c.json({ success: false, error: 'No fields to update' }, 400)
+    }
+    
+    const query = `UPDATE image_entries SET ${updateFields.join(', ')} WHERE id = ?`
+    params.push(id)
+
+    await c.env.DB.prepare(query).bind(...params).run()
 
     return c.json({ success: true })
   } catch (error) {
@@ -259,8 +379,9 @@ app.get('/', (c) => {
           .excel-table th,
           .excel-table td {
             border: 1px solid #d1d5db;
-            padding: 8px;
+            padding: 4px 6px;
             text-align: left;
+            font-size: 14px;
           }
           .excel-table th {
             background-color: #f3f4f6;
@@ -275,28 +396,37 @@ app.get('/', (c) => {
             background-color: #e5e7eb;
           }
           .image-cell {
-            width: 150px;
+            width: 80px;
             text-align: center;
+            padding: 2px;
           }
           .image-cell img {
-            max-width: 100px;
-            max-height: 100px;
+            width: 70px;
+            height: 50px;
             object-fit: cover;
             cursor: pointer;
-            border-radius: 4px;
+            border-radius: 3px;
+            transition: transform 0.2s;
+          }
+          .image-cell img:hover {
+            transform: scale(1.2);
+            z-index: 10;
+            position: relative;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
           }
           .description-cell {
-            min-width: 300px;
-            max-width: 500px;
+            min-width: 250px;
+            max-width: 400px;
           }
           .description-cell textarea {
             width: 100%;
             border: none;
             background: transparent;
-            resize: vertical;
-            min-height: 60px;
+            resize: none;
+            min-height: 40px;
             font-family: inherit;
-            font-size: inherit;
+            font-size: 13px;
+            line-height: 1.3;
           }
           .description-cell textarea:focus {
             outline: 2px solid #3b82f6;
@@ -357,6 +487,88 @@ app.get('/', (c) => {
             opacity: 0.5;
             cursor: not-allowed;
           }
+          
+          /* Sidebar Styles */
+          .category-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+          }
+          .category-item:hover {
+            background-color: #f3f4f6;
+          }
+          .category-item.active {
+            background-color: #eff6ff;
+            border: 1px solid #3b82f6;
+            color: #1d4ed8;
+          }
+          .category-item .count {
+            font-size: 12px;
+            background: #e5e7eb;
+            color: #374151;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: auto;
+          }
+          .category-item.active .count {
+            background: #dbeafe;
+            color: #1d4ed8;
+          }
+          
+          .filter-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #6b7280;
+          }
+          .filter-item:hover {
+            background-color: #f9fafb;
+            color: #374151;
+          }
+          
+          /* Compact table styles */
+          .compact-info {
+            font-size: 11px;
+            color: #6b7280;
+            line-height: 1.2;
+          }
+          
+          /* Category badge */
+          .category-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            color: white;
+          }
+          
+          /* Pagination styles */
+          .page-btn {
+            padding: 6px 12px;
+            border: 1px solid #d1d5db;
+            background: white;
+            color: #374151;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: all 0.2s;
+          }
+          .page-btn:hover {
+            background: #f9fafb;
+          }
+          .page-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+          }
           .upload-area {
             border: 2px dashed #d1d5db;
             border-radius: 8px;
@@ -373,8 +585,79 @@ app.get('/', (c) => {
           }
         </style>
     </head>
-    <body class="bg-gray-50 p-4">
-        <div class="max-w-7xl mx-auto">
+    <body class="bg-gray-50">
+        <div class="flex h-screen">
+            <!-- Sidebar -->
+            <div class="w-64 bg-white shadow-md p-4 overflow-y-auto">
+                <h2 class="text-lg font-semibold mb-4">
+                    <i class="fas fa-folder mr-2"></i>
+                    Categories
+                </h2>
+                
+                <!-- Category List -->
+                <div id="categoryList" class="space-y-2 mb-6">
+                    <div class="category-item active" data-category="all">
+                        <i class="fas fa-images mr-2"></i>
+                        <span>All Images</span>
+                        <span class="count ml-auto" id="totalCount">0</span>
+                    </div>
+                </div>
+                
+                <!-- Add Category Button -->
+                <button id="addCategoryBtn" class="w-full bg-blue-600 text-white px-3 py-2 rounded-md text-sm hover:bg-blue-700 transition-colors">
+                    <i class="fas fa-plus mr-2"></i>
+                    Add Category
+                </button>
+                
+                <!-- Quick Filters -->
+                <div class="mt-6">
+                    <h3 class="text-sm font-semibold mb-3 text-gray-600">QUICK FILTERS</h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="filter-item" data-filter="recent">
+                            <i class="fas fa-clock mr-2"></i>
+                            Recent (7 days)
+                        </div>
+                        <div class="filter-item" data-filter="uncategorized">
+                            <i class="fas fa-question-circle mr-2"></i>
+                            Uncategorized
+                        </div>
+                        <div class="filter-item" data-filter="draft">
+                            <i class="fas fa-edit mr-2"></i>
+                            Drafts
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Main Content -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+                <!-- Header -->
+                <div class="bg-white shadow-sm p-4">
+                    <div class="flex items-center justify-between">
+                        <h1 class="text-2xl font-bold text-gray-800">
+                            <i class="fas fa-chart-bar mr-2"></i>
+                            Image Chart Manager
+                        </h1>
+                        
+                        <!-- Search and Controls -->
+                        <div class="flex items-center gap-4">
+                            <div class="relative">
+                                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                                <input type="text" id="searchInput" placeholder="Search descriptions..." 
+                                       class="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-64 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <select id="viewModeSelect" class="px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="50">50 per page</option>
+                                <option value="25">25 per page</option>
+                                <option value="100">100 per page</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Content Area -->
+                <div class="flex-1 p-4 overflow-hidden">
+        <div class="max-w-full">
             <h1 class="text-3xl font-bold text-gray-800 mb-6">
                 <i class="fas fa-chart-bar mr-2"></i>
                 Image Chart Manager
@@ -440,21 +723,22 @@ app.get('/', (c) => {
                     </button>
                 </div>
 
-                <div class="overflow-auto max-h-96">
+                <div class="overflow-auto" style="max-height: 70vh;">
                     <table class="excel-table">
                         <thead>
                             <tr>
-                                <th style="width: 60px;">#</th>
-                                <th style="width: 150px;">Image</th>
+                                <th style="width: 30px;">#</th>
+                                <th style="width: 80px;">Image</th>
                                 <th style="width: auto;">Description</th>
-                                <th style="width: 120px;">File Info</th>
-                                <th style="width: 150px;">Upload Date</th>
-                                <th style="width: 100px;">Actions</th>
+                                <th style="width: 100px;">Category</th>
+                                <th style="width: 80px;">Size</th>
+                                <th style="width: 100px;">Date</th>
+                                <th style="width: 80px;">Actions</th>
                             </tr>
                         </thead>
                         <tbody id="imageTableBody">
                             <tr>
-                                <td colspan="6" class="text-center py-8 text-gray-500">
+                                <td colspan="7" class="text-center py-8 text-gray-500">
                                     <i class="fas fa-image text-3xl mb-2"></i>
                                     <p>No images uploaded yet. Upload some images to get started!</p>
                                 </td>
@@ -462,6 +746,55 @@ app.get('/', (c) => {
                         </tbody>
                     </table>
                 </div>
+            </div>
+                </div>
+                
+                <!-- Pagination -->
+                <div class="bg-white border-t p-4">
+                    <div class="flex items-center justify-between">
+                        <div class="text-sm text-gray-600" id="paginationInfo">
+                            Showing 0-0 of 0 images
+                        </div>
+                        <div class="flex items-center gap-2" id="paginationControls">
+                            <button id="prevBtn" class="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50" disabled>
+                                <i class="fas fa-chevron-left"></i> Previous
+                            </button>
+                            <span id="pageNumbers" class="flex gap-1"></span>
+                            <button id="nextBtn" class="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50" disabled>
+                                Next <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Category Modal -->
+        <div id="categoryModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 w-96">
+                <h3 class="text-lg font-semibold mb-4">Add New Category</h3>
+                <form id="categoryForm">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">Category Name</label>
+                        <input type="text" id="categoryName" class="w-full px-3 py-2 border border-gray-300 rounded-md" required>
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">Color</label>
+                        <input type="color" id="categoryColor" value="#3b82f6" class="w-full h-10 border border-gray-300 rounded-md">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">Description (Optional)</label>
+                        <textarea id="categoryDescription" class="w-full px-3 py-2 border border-gray-300 rounded-md h-20"></textarea>
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700">
+                            Add Category
+                        </button>
+                        <button type="button" id="cancelCategoryBtn" class="flex-1 bg-gray-300 text-gray-700 py-2 rounded-md hover:bg-gray-400">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
 

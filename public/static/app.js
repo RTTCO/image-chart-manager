@@ -3,11 +3,18 @@ class ImageChartManager {
     constructor() {
         this.selectedFiles = [];
         this.contextMenuTarget = null;
+        this.currentPage = 1;
+        this.itemsPerPage = 50;
+        this.totalPages = 1;
+        this.currentCategory = 'all';
+        this.currentSearch = '';
+        this.categories = [];
         this.init();
     }
 
     init() {
         this.setupEventListeners();
+        this.loadCategories();
         this.loadImages();
     }
 
@@ -16,37 +23,60 @@ class ImageChartManager {
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         
-        uploadArea.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => this.handleFileSelect(e.target.files));
+        if (uploadArea && fileInput) {
+            uploadArea.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', (e) => this.handleFileSelect(e.target.files));
 
-        // Drag and drop
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
+            // Drag and drop
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+
+            uploadArea.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                this.handleFileSelect(e.dataTransfer.files);
+            });
+
+            // Upload and clear buttons
+            document.getElementById('uploadBtn')?.addEventListener('click', () => this.uploadFiles());
+            document.getElementById('clearBtn')?.addEventListener('click', () => this.clearFiles());
+        }
+
+        // Search and pagination
+        document.getElementById('searchInput')?.addEventListener('input', (e) => {
+            this.currentSearch = e.target.value;
+            this.currentPage = 1;
+            this.loadImages();
+        });
+        
+        document.getElementById('viewModeSelect')?.addEventListener('change', (e) => {
+            this.itemsPerPage = parseInt(e.target.value);
+            this.currentPage = 1;
+            this.loadImages();
         });
 
-        uploadArea.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-        });
+        // Category management
+        document.getElementById('addCategoryBtn')?.addEventListener('click', () => this.showCategoryModal());
+        document.getElementById('cancelCategoryBtn')?.addEventListener('click', () => this.hideCategoryModal());
+        document.getElementById('categoryForm')?.addEventListener('submit', (e) => this.handleCategorySubmit(e));
 
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            this.handleFileSelect(e.dataTransfer.files);
-        });
-
-        // Upload and clear buttons
-        document.getElementById('uploadBtn').addEventListener('click', () => this.uploadFiles());
-        document.getElementById('clearBtn').addEventListener('click', () => this.clearFiles());
-        document.getElementById('refreshBtn').addEventListener('click', () => this.loadImages());
+        // Pagination
+        document.getElementById('prevBtn')?.addEventListener('click', () => this.goToPage(this.currentPage - 1));
+        document.getElementById('nextBtn')?.addEventListener('click', () => this.goToPage(this.currentPage + 1));
 
         // Context menu
         document.addEventListener('contextmenu', (e) => this.handleContextMenu(e));
         document.addEventListener('click', () => this.hideContextMenu());
-        document.getElementById('editItem').addEventListener('click', () => this.editDescriptionFromContext());
-        document.getElementById('downloadItem').addEventListener('click', () => this.downloadImage());
-        document.getElementById('deleteRowItem').addEventListener('click', () => this.deleteRowFromContext());
+        document.getElementById('editItem')?.addEventListener('click', () => this.editDescriptionFromContext());
+        document.getElementById('downloadItem')?.addEventListener('click', () => this.downloadImage());
+        document.getElementById('deleteRowItem')?.addEventListener('click', () => this.deleteRowFromContext());
     }
 
     handleFileSelect(files) {
@@ -213,9 +243,9 @@ class ImageChartManager {
         if (images.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="6" class="text-center py-8 text-gray-500">
+                    <td colspan="7" class="text-center py-8 text-gray-500">
                         <i class="fas fa-image text-3xl mb-2"></i>
-                        <p>No images uploaded yet. Upload some images to get started!</p>
+                        <p>No images found. Try adjusting your filters or upload some images!</p>
                     </td>
                 </tr>
             `;
@@ -224,13 +254,12 @@ class ImageChartManager {
 
         tbody.innerHTML = images.map((image, index) => `
             <tr data-row-id="${image.id}">
-                <td class="text-center font-medium">${index + 1}</td>
+                <td class="text-center font-medium compact-info">${(this.currentPage - 1) * this.itemsPerPage + index + 1}</td>
                 <td class="image-cell">
                     <img src="/api/images/${image.id}/file" 
                          alt="${image.original_name}"
-                         title="${image.original_name}"
-                         data-image-id="${image.id}"
-                         class="hover:scale-105 transition-transform">
+                         title="${image.original_name} (${this.formatFileSize(image.file_size)})"
+                         data-image-id="${image.id}">
                 </td>
                 <td class="description-cell" data-image-id="${image.id}">
                     <textarea data-image-id="${image.id}" 
@@ -240,15 +269,19 @@ class ImageChartManager {
                               onfocus="imageManager.startEditing(${image.id})"
                               onblur="imageManager.saveDescription(${image.id}, this)">${image.description || ''}</textarea>
                 </td>
-                <td class="text-sm">
-                    <div class="space-y-1">
-                        <div><strong>Size:</strong> ${this.formatFileSize(image.file_size)}</div>
-                        <div><strong>Type:</strong> ${image.mime_type}</div>
-                        <div><strong>Original:</strong> ${this.truncateString(image.original_name, 15)}</div>
-                    </div>
+                <td>
+                    <select class="category-select text-xs p-1 border border-gray-300 rounded w-full" 
+                            onchange="imageManager.updateCategory(${image.id}, this.value)">
+                        ${this.renderCategoryOptions(image.category_id)}
+                    </select>
                 </td>
-                <td class="text-sm">
-                    ${new Date(image.upload_date).toLocaleString()}
+                <td class="compact-info">
+                    ${this.formatFileSize(image.file_size)}
+                    <div class="text-xs text-gray-500">${image.mime_type.split('/')[1].toUpperCase()}</div>
+                </td>
+                <td class="compact-info">
+                    ${new Date(image.upload_date).toLocaleDateString()}
+                    <div class="text-xs text-gray-500">${new Date(image.upload_date).toLocaleTimeString()}</div>
                 </td>
                 <td class="action-buttons">
                     <button class="action-btn edit" onclick="imageManager.editDescription(${image.id})" title="Edit Description">
@@ -473,6 +506,203 @@ class ImageChartManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    async loadCategories() {
+        try {
+            const response = await axios.get('/api/categories');
+            if (response.data.success) {
+                this.categories = response.data.data;
+                this.renderCategories();
+            }
+        } catch (error) {
+            console.error('Load categories error:', error);
+        }
+    }
+
+    renderCategories() {
+        const categoryList = document.getElementById('categoryList');
+        if (!categoryList) return;
+
+        const totalCount = this.categories.reduce((sum, cat) => sum + (cat.image_count || 0), 0);
+        
+        let html = `
+            <div class="category-item ${this.currentCategory === 'all' ? 'active' : ''}" data-category="all">
+                <i class="fas fa-images mr-2"></i>
+                <span>All Images</span>
+                <span class="count">${totalCount}</span>
+            </div>
+        `;
+
+        this.categories.forEach(category => {
+            html += `
+                <div class="category-item ${this.currentCategory === category.name ? 'active' : ''}" 
+                     data-category="${category.name}">
+                    <i class="fas fa-folder mr-2" style="color: ${category.color}"></i>
+                    <span>${category.name}</span>
+                    <span class="count">${category.image_count || 0}</span>
+                </div>
+            `;
+        });
+
+        categoryList.innerHTML = html;
+
+        // Add click events
+        categoryList.querySelectorAll('.category-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const category = e.currentTarget.dataset.category;
+                this.selectCategory(category);
+            });
+        });
+    }
+
+    selectCategory(category) {
+        this.currentCategory = category;
+        this.currentPage = 1;
+        
+        // Update active state
+        document.querySelectorAll('.category-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.category === category);
+        });
+        
+        this.loadImages();
+    }
+
+    renderCategoryOptions(selectedId) {
+        let options = '<option value="">No Category</option>';
+        this.categories.forEach(category => {
+            const selected = category.id == selectedId ? 'selected' : '';
+            options += `<option value="${category.id}" ${selected}>${category.name}</option>`;
+        });
+        return options;
+    }
+
+    async updateCategory(imageId, categoryId) {
+        try {
+            const response = await axios.put(`/api/images/${imageId}`, {
+                category_id: categoryId || null
+            });
+
+            if (response.data.success) {
+                // Refresh category counts
+                this.loadCategories();
+            } else {
+                this.showMessage('Failed to update category', 'error');
+            }
+        } catch (error) {
+            console.error('Update category error:', error);
+            this.showMessage('Failed to update category', 'error');
+        }
+    }
+
+    showCategoryModal() {
+        document.getElementById('categoryModal').classList.remove('hidden');
+        document.getElementById('categoryModal').classList.add('flex');
+    }
+
+    hideCategoryModal() {
+        document.getElementById('categoryModal').classList.add('hidden');
+        document.getElementById('categoryModal').classList.remove('flex');
+        document.getElementById('categoryForm').reset();
+    }
+
+    async handleCategorySubmit(e) {
+        e.preventDefault();
+        
+        const name = document.getElementById('categoryName').value.trim();
+        const color = document.getElementById('categoryColor').value;
+        const description = document.getElementById('categoryDescription').value.trim();
+
+        try {
+            const response = await axios.post('/api/categories', {
+                name, color, description
+            });
+
+            if (response.data.success) {
+                this.showMessage('Category created successfully!', 'success');
+                this.hideCategoryModal();
+                this.loadCategories();
+            } else {
+                this.showMessage(response.data.error || 'Failed to create category', 'error');
+            }
+        } catch (error) {
+            console.error('Create category error:', error);
+            this.showMessage('Failed to create category', 'error');
+        }
+    }
+
+    async loadImages() {
+        try {
+            const params = new URLSearchParams({
+                page: this.currentPage,
+                limit: this.itemsPerPage
+            });
+            
+            if (this.currentCategory && this.currentCategory !== 'all') {
+                params.append('category', this.currentCategory);
+            }
+            
+            if (this.currentSearch) {
+                params.append('search', this.currentSearch);
+            }
+
+            const response = await axios.get(`/api/images?${params}`);
+            if (response.data.success) {
+                this.renderImageTable(response.data.data);
+                this.updatePagination(response.data.pagination);
+            } else {
+                this.showMessage('Failed to load images', 'error');
+            }
+        } catch (error) {
+            console.error('Load images error:', error);
+            this.showMessage('Failed to load images', 'error');
+        }
+    }
+
+    updatePagination(pagination) {
+        this.totalPages = pagination.totalPages;
+        
+        // Update info text
+        const start = ((pagination.page - 1) * pagination.limit) + 1;
+        const end = Math.min(pagination.page * pagination.limit, pagination.total);
+        document.getElementById('paginationInfo').textContent = 
+            `Showing ${start}-${end} of ${pagination.total} images`;
+        
+        // Update buttons
+        document.getElementById('prevBtn').disabled = pagination.page <= 1;
+        document.getElementById('nextBtn').disabled = pagination.page >= pagination.totalPages;
+        
+        // Update page numbers
+        this.renderPageNumbers(pagination);
+    }
+
+    renderPageNumbers(pagination) {
+        const container = document.getElementById('pageNumbers');
+        if (!container) return;
+        
+        let html = '';
+        const current = pagination.page;
+        const total = pagination.totalPages;
+        
+        // Show pages around current page
+        const start = Math.max(1, current - 2);
+        const end = Math.min(total, current + 2);
+        
+        for (let i = start; i <= end; i++) {
+            html += `
+                <button class="page-btn ${i === current ? 'active' : ''}" 
+                        onclick="imageManager.goToPage(${i})">${i}</button>
+            `;
+        }
+        
+        container.innerHTML = html;
+    }
+
+    goToPage(page) {
+        if (page >= 1 && page <= this.totalPages) {
+            this.currentPage = page;
+            this.loadImages();
+        }
     }
 
     showMessage(message, type = 'info') {
