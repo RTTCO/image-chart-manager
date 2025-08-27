@@ -183,14 +183,21 @@ class ImageChartManager {
         const descriptions = [];
         const categoryIds = [];
 
-        // Add files and collect descriptions and categories
-        this.selectedFiles.forEach((file, index) => {
-            formData.append('images', file);
+        // Compress and add files
+        for (let index = 0; index < this.selectedFiles.length; index++) {
+            const originalFile = this.selectedFiles[index];
+            
+            // Compress image if it's too large (>500KB)
+            const compressedFile = originalFile.size > 500000 ? 
+                await this.compressImage(originalFile, 0.7, 1200) : originalFile;
+            
+            formData.append('images', compressedFile);
+            
             const descInput = document.querySelector(`textarea[data-index="${index}"]`);
             const categorySelect = document.querySelector(`select[data-index="${index}"]`);
             descriptions.push(descInput ? descInput.value.trim() : '');
             categoryIds.push(categorySelect ? categorySelect.value || null : null);
-        });
+        }
 
         // Add descriptions
         descriptions.forEach(desc => {
@@ -204,6 +211,7 @@ class ImageChartManager {
 
         try {
             this.showProgress(true);
+            this.updateProgressText('Compressing images...');
             
             // Mobile debugging - log file details
             console.log('Upload attempt:', {
@@ -212,6 +220,8 @@ class ImageChartManager {
                 categoryIds: categoryIds,
                 isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
             });
+            
+            this.updateProgressText('Uploading images...');
             
             const response = await axios.post('/api/upload', formData, {
                 timeout: 60000, // 60 second timeout for mobile
@@ -266,6 +276,14 @@ class ImageChartManager {
 
     updateProgress(percent) {
         document.getElementById('progressBar').style.width = `${percent}%`;
+    }
+
+    updateProgressText(text) {
+        const progressDiv = document.getElementById('uploadProgress');
+        const textSpan = progressDiv.querySelector('span');
+        if (textSpan) {
+            textSpan.textContent = text;
+        }
     }
 
     async loadImages() {
@@ -544,6 +562,45 @@ class ImageChartManager {
         const sizes = ['B', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    async compressImage(file, quality = 0.7, maxWidth = 1200) {
+        return new Promise((resolve) => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            img.onload = () => {
+                // Calculate new dimensions maintaining aspect ratio
+                let { width, height } = img;
+                if (width > maxWidth) {
+                    height = (height * maxWidth) / width;
+                    width = maxWidth;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                
+                // Draw and compress image
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                canvas.toBlob((blob) => {
+                    const compressedFile = new File([blob], file.name, {
+                        type: 'image/jpeg',
+                        lastModified: Date.now()
+                    });
+                    console.log(`Compressed ${file.name}: ${this.formatFileSize(file.size)} → ${this.formatFileSize(compressedFile.size)}`);
+                    resolve(compressedFile);
+                }, 'image/jpeg', quality);
+            };
+            
+            img.onerror = () => {
+                console.log(`Compression failed for ${file.name}, using original`);
+                resolve(file);
+            };
+            
+            img.src = URL.createObjectURL(file);
+        });
     }
 
     truncateString(str, length) {
