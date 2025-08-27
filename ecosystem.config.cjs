@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'image-chart-app',
       script: 'npx',
-      args: 'wrangler pages dev dist --d1=image-chart-db --r2=image-uploads --local --ip 0.0.0.0 --port 3000',
+      args: 'wrangler pages dev dist --d1=image-chart-db --local --ip 0.0.0.0 --port 3000',
       env: {
         NODE_ENV: 'development',
         PORT: 3000

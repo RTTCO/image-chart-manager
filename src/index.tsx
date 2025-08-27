@@ -147,19 +147,21 @@ app.post('/api/upload', async (c) => {
       
       if (!(file instanceof File)) continue
 
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        console.error(`File too large: ${file.name} (${file.size} bytes)`)
+        continue
+      }
+
       // Generate unique filename
       const timestamp = Date.now()
       const randomId = Math.random().toString(36).substring(7)
       const ext = file.name.split('.').pop() || 'jpg'
       const filename = `${timestamp}-${randomId}.${ext}`
 
-      // Upload to R2
+      // Convert to base64 for database storage
       const arrayBuffer = await file.arrayBuffer()
-      await c.env.R2.put(filename, arrayBuffer, {
-        httpMetadata: {
-          contentType: file.type || 'image/jpeg'
-        }
-      })
+      const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
 
       // Get next row order
       const { results: maxOrderResult } = await c.env.DB.prepare(
@@ -167,11 +169,11 @@ app.post('/api/upload', async (c) => {
       ).all()
       const nextOrder = ((maxOrderResult[0] as any)?.max_order || 0) + 1
 
-      // Save metadata to D1
+      // Save metadata and base64 data to D1
       const result = await c.env.DB.prepare(`
-        INSERT INTO image_entries (filename, original_name, file_size, mime_type, description, row_order)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).bind(filename, file.name, file.size, file.type, description, nextOrder).run()
+        INSERT INTO image_entries (filename, original_name, file_size, mime_type, description, row_order, image_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(filename, file.name, file.size, file.type, description, nextOrder, base64Data).run()
 
       uploadedFiles.push({
         id: result.meta.last_row_id,
@@ -187,7 +189,7 @@ app.post('/api/upload', async (c) => {
     return c.json({ success: true, data: uploadedFiles })
   } catch (error) {
     console.error('Upload error:', error)
-    return c.json({ success: false, error: 'Upload failed' }, 500)
+    return c.json({ success: false, error: `Upload failed: ${error.message}` }, 500)
   }
 })
 
@@ -236,21 +238,16 @@ app.delete('/api/images/:id', async (c) => {
   try {
     const id = c.req.param('id')
 
-    // Get image info
+    // Check if image exists
     const { results } = await c.env.DB.prepare(
-      'SELECT filename FROM image_entries WHERE id = ?'
+      'SELECT id FROM image_entries WHERE id = ?'
     ).bind(id).all()
 
     if (results.length === 0) {
       return c.json({ success: false, error: 'Image not found' }, 404)
     }
-
-    const image = results[0] as any
     
-    // Delete from R2
-    await c.env.R2.delete(image.filename)
-    
-    // Delete from database
+    // Delete from database (image data is stored in the database)
     await c.env.DB.prepare(
       'DELETE FROM image_entries WHERE id = ?'
     ).bind(id).run()
@@ -267,9 +264,9 @@ app.get('/api/images/:id/file', async (c) => {
   try {
     const id = c.req.param('id')
 
-    // Get image info
+    // Get image info and data
     const { results } = await c.env.DB.prepare(
-      'SELECT filename, mime_type, original_name FROM image_entries WHERE id = ?'
+      'SELECT filename, mime_type, original_name, image_data FROM image_entries WHERE id = ?'
     ).bind(id).all()
 
     if (results.length === 0) {
@@ -278,16 +275,22 @@ app.get('/api/images/:id/file', async (c) => {
 
     const image = results[0] as any
     
-    // Get file from R2
-    const object = await c.env.R2.get(image.filename)
-    if (!object) {
+    if (!image.image_data) {
       return c.notFound()
     }
 
-    return new Response(object.body, {
+    // Convert base64 back to binary
+    const binaryString = atob(image.image_data)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
+
+    return new Response(bytes, {
       headers: {
         'Content-Type': image.mime_type || 'image/jpeg',
-        'Content-Disposition': `inline; filename="${image.original_name}"`
+        'Content-Disposition': `inline; filename="${image.original_name}"`,
+        'Cache-Control': 'public, max-age=31536000'
       }
     })
   } catch (error) {
@@ -301,9 +304,9 @@ app.get('/api/images/:id/download', async (c) => {
   try {
     const id = c.req.param('id')
 
-    // Get image info
+    // Get image info and data
     const { results } = await c.env.DB.prepare(
-      'SELECT filename, mime_type, original_name FROM image_entries WHERE id = ?'
+      'SELECT filename, mime_type, original_name, image_data FROM image_entries WHERE id = ?'
     ).bind(id).all()
 
     if (results.length === 0) {
@@ -312,13 +315,18 @@ app.get('/api/images/:id/download', async (c) => {
 
     const image = results[0] as any
     
-    // Get file from R2
-    const object = await c.env.R2.get(image.filename)
-    if (!object) {
+    if (!image.image_data) {
       return c.notFound()
     }
 
-    return new Response(object.body, {
+    // Convert base64 back to binary
+    const binaryString = atob(image.image_data)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i)
+    }
+
+    return new Response(bytes, {
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="${image.original_name}"`
