@@ -19,15 +19,29 @@
 
 ✅ **Excel-Like Interface**
 - Sortable table with image thumbnails
-- Inline description editing
+- Inline description editing with keyboard shortcuts
 - File information display (size, type, date)
 - Row numbering and responsive design
 
-✅ **Image Management**
-- Right-click context menu on images
-- Download individual images
-- Delete images with confirmation
-- Real-time table updates
+✅ **Enhanced Text Editing**
+- **Keyboard Shortcuts**: Ctrl/Cmd+Enter to save, Escape to cancel
+- **Visual Feedback**: Blue highlight when editing, green when saving, red on error
+- **Auto-Save**: Changes save automatically when clicking away
+- **Error Recovery**: Failed edits revert to original text
+- **Click-to-Edit**: Click any description to start editing
+
+✅ **Row Management**
+- **Delete Entire Rows**: Remove both image and description together
+- **Action Buttons**: Edit and Delete buttons for each row
+- **Confirmation Dialogs**: Prevent accidental deletions
+- **Smooth Animations**: Visual feedback during row deletion
+
+✅ **Enhanced Context Menu**
+- Right-click images for expanded options:
+  - **Edit Description**: Focus and select description text
+  - **Download Image**: Save original file to computer
+  - **Delete Row**: Remove entire row with confirmation
+- **Multiple Access Methods**: Button or right-click access
 
 ✅ **Data Persistence** 
 - Cloudflare D1 SQLite database for metadata
@@ -91,20 +105,30 @@ image_entries (
 
 ### Managing Images  
 1. **View Table**: All uploaded images appear in Excel-like table
-2. **Edit Descriptions**: Click in description column to edit text
-3. **Right-Click Menu**: Right-click any image for options:
-   - **Download**: Save original file to computer
-   - **Delete**: Remove image (requires confirmation)
-4. **Refresh**: Click refresh button to reload table
+2. **Edit Descriptions**: 
+   - **Click** any description field to start editing
+   - **Keyboard Shortcuts**: Ctrl/Cmd+Enter to save, Escape to cancel
+   - **Auto-Save**: Changes save when you click away
+   - **Visual Feedback**: Blue border when editing, green when saving
+3. **Row Actions**:
+   - **Edit Button**: Click edit icon to focus on description
+   - **Delete Button**: Click trash icon to delete entire row
+   - **Right-Click Menu**: Right-click any image for all options
+4. **Context Menu Options**:
+   - **Edit Description**: Focus and select text for editing
+   - **Download Image**: Save original file to computer  
+   - **Delete Row**: Remove both image and description
+5. **Refresh**: Click refresh button to reload table
 
 ### Features Not Yet Implemented
 ❌ **Advanced Sorting**: Column-based sorting controls
-❌ **Bulk Operations**: Select multiple images for bulk delete/download
+❌ **Bulk Operations**: Select multiple rows for bulk delete/download
 ❌ **Image Filters**: Filter by date, size, type
 ❌ **Reorder Rows**: Drag & drop row reordering
 ❌ **Export Options**: Export metadata as CSV/Excel
 ❌ **Search Functionality**: Search descriptions and filenames
 ❌ **Image Categories**: Tag/category system
+❌ **Undo/Redo**: Multi-level undo for all edits
 ❌ **Production Deployment**: Deploy to Cloudflare Pages
 
 ## Deployment
