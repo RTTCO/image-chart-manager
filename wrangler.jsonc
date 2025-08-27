@@ -15,17 +15,17 @@
   //     "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   //   }
   // ],
-  "r2_buckets": [
-    {
-      "binding": "R2",
-      "bucket_name": "image-uploads"
-    }
-  ],
+  // "r2_buckets": [
+  //   {
+  //     "binding": "R2",
+  //     "bucket_name": "image-uploads"
+  //   }
+  // ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "image-chart-db",
-      "database_id": "placeholder-will-be-updated"
+      "database_id": "7c895e8b-9559-4853-bced-00c7d91bbe19"
     }
   ],
   // "ai": {
