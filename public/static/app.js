@@ -204,13 +204,22 @@ class ImageChartManager {
 
         try {
             this.showProgress(true);
+            
+            // Mobile debugging - log file details
+            console.log('Upload attempt:', {
+                fileCount: this.selectedFiles.length,
+                descriptions: descriptions,
+                categoryIds: categoryIds,
+                isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+            });
+            
             const response = await axios.post('/api/upload', formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
-                },
+                timeout: 60000, // 60 second timeout for mobile
+                // Don't set Content-Type - let browser set it automatically for FormData
                 onUploadProgress: (progressEvent) => {
                     const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
                     this.updateProgress(percentCompleted);
+                    console.log('Upload progress:', percentCompleted + '%');
                 }
             });
 
@@ -223,7 +232,20 @@ class ImageChartManager {
             }
         } catch (error) {
             console.error('Upload error:', error);
-            this.showMessage('Failed to upload images. Please try again.', 'error');
+            
+            // Mobile-specific error messages
+            let errorMessage = 'Failed to upload images. ';
+            if (error.code === 'ECONNABORTED') {
+                errorMessage += 'Upload timed out. Try with smaller images or better connection.';
+            } else if (error.response) {
+                errorMessage += `Server error: ${error.response.status} - ${error.response.data?.error || 'Unknown error'}`;
+            } else if (error.request) {
+                errorMessage += 'Network error. Check your internet connection.';
+            } else {
+                errorMessage += `Error: ${error.message}`;
+            }
+            
+            this.showMessage(errorMessage, 'error');
         } finally {
             this.showProgress(false);
         }
