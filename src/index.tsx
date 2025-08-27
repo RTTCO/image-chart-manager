@@ -4,7 +4,6 @@ import { serveStatic } from 'hono/cloudflare-workers'
 
 type Bindings = {
   DB: D1Database;
-  R2: R2Bucket;
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -216,6 +215,7 @@ app.post('/api/upload', async (c) => {
     const body = await c.req.formData()
     const files = body.getAll('images') as File[]
     const descriptions = body.getAll('descriptions') as string[]
+    const categoryIds = body.getAll('categoryIds') as string[]
     
     if (!files || files.length === 0) {
       return c.json({ success: false, error: 'No files uploaded' }, 400)
@@ -226,6 +226,7 @@ app.post('/api/upload', async (c) => {
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       const description = descriptions[i] || ''
+      const categoryId = categoryIds[i] && categoryIds[i] !== '' ? parseInt(categoryIds[i]) : null
       
       if (!(file instanceof File)) continue
 
@@ -253,9 +254,9 @@ app.post('/api/upload', async (c) => {
 
       // Save metadata and base64 data to D1
       const result = await c.env.DB.prepare(`
-        INSERT INTO image_entries (filename, original_name, file_size, mime_type, description, row_order, image_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(filename, file.name, file.size, file.type, description, nextOrder, base64Data).run()
+        INSERT INTO image_entries (filename, original_name, file_size, mime_type, description, row_order, image_data, category_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(filename, file.name, file.size, file.type, description, nextOrder, base64Data, categoryId).run()
 
       uploadedFiles.push({
         id: result.meta.last_row_id,
@@ -264,7 +265,8 @@ app.post('/api/upload', async (c) => {
         file_size: file.size,
         mime_type: file.type,
         description,
-        row_order: nextOrder
+        row_order: nextOrder,
+        category_id: categoryId
       })
     }
 
@@ -427,7 +429,7 @@ app.get('/', (c) => {
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
         <title>Image Chart Manager</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
@@ -698,6 +700,94 @@ app.get('/', (c) => {
             background: #eff6ff;
             border: 1px solid #bfdbfe;
           }
+          
+          /* File preview styles */
+          #previewContainer {
+            max-height: 500px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            background: #f9fafb;
+          }
+          #previewContainer::-webkit-scrollbar {
+            width: 8px;
+          }
+          #previewContainer::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+          }
+          #previewContainer::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+          }
+          #previewContainer::-webkit-scrollbar-thumb:hover {
+            background: #a1a1a1;
+          }
+          .file-preview-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: white;
+            margin-bottom: 8px;
+          }
+          .file-preview-info {
+            display: flex;
+            align-items: center;
+            flex: 1;
+          }
+          .file-preview-thumbnail {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-right: 12px;
+          }
+          .file-preview-details {
+            flex: 1;
+          }
+          .file-preview-name {
+            font-weight: 500;
+            font-size: 14px;
+            color: #374151;
+            margin-bottom: 2px;
+          }
+          .file-preview-size {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 8px;
+          }
+          .description-input {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 60px;
+          }
+          .category-input {
+            appearance: auto;
+          }
+          .remove-file-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background-color 0.2s;
+          }
+          .remove-file-btn:hover {
+            background: #dc2626;
+          }
           .upload-area {
             border: 2px dashed #d1d5db;
             border-radius: 8px;
@@ -712,12 +802,213 @@ app.get('/', (c) => {
             border-color: #3b82f6;
             background-color: #eff6ff;
           }
+          
+          /* Mobile Responsive Styles */
+          .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: #374151;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 4px;
+          }
+          .mobile-menu-btn:hover {
+            background: #f3f4f6;
+          }
+          
+          @media (max-width: 768px) {
+            /* Mobile Layout */
+            .mobile-menu-btn {
+              display: block;
+            }
+            
+            /* Hide sidebar by default on mobile */
+            .mobile-sidebar {
+              position: fixed;
+              top: 0;
+              left: -300px;
+              width: 280px;
+              height: 100vh;
+              z-index: 1000;
+              transition: left 0.3s ease;
+              background: white;
+              box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            }
+            .mobile-sidebar.open {
+              left: 0;
+            }
+            
+            /* Mobile overlay */
+            .mobile-overlay {
+              position: fixed;
+              top: 0;
+              left: 0;
+              width: 100vw;
+              height: 100vh;
+              background: rgba(0,0,0,0.5);
+              z-index: 999;
+              display: none;
+            }
+            .mobile-overlay.show {
+              display: block;
+            }
+            
+            /* Mobile main content */
+            .mobile-main {
+              width: 100%;
+              margin-left: 0;
+            }
+            
+            /* Mobile header adjustments */
+            .mobile-header h1 {
+              font-size: 1.5rem;
+            }
+            .mobile-header .search-controls {
+              flex-direction: column;
+              gap: 8px;
+              width: 100%;
+            }
+            .mobile-header .search-controls input {
+              width: 100%;
+            }
+            
+            /* Mobile upload area */
+            .upload-area {
+              padding: 20px;
+              font-size: 14px;
+            }
+            .upload-area i {
+              font-size: 2rem !important;
+            }
+            
+            /* Mobile file preview */
+            #previewContainer {
+              max-height: 300px;
+            }
+            .file-preview-item {
+              flex-direction: column;
+              align-items: flex-start;
+              padding: 16px;
+            }
+            .file-preview-info {
+              width: 100%;
+              margin-bottom: 12px;
+            }
+            .file-preview-thumbnail {
+              width: 80px;
+              height: 80px;
+            }
+            .description-input {
+              min-height: 80px;
+              font-size: 16px; /* Prevents zoom on iOS */
+            }
+            .category-input {
+              font-size: 16px; /* Prevents zoom on iOS */
+            }
+            
+            /* Mobile buttons */
+            #uploadBtn, #clearBtn {
+              width: 100%;
+              margin: 8px 0;
+              padding: 12px;
+              font-size: 16px;
+            }
+            
+            /* Mobile table - make it horizontally scrollable */
+            .table-container {
+              overflow-x: auto;
+              -webkit-overflow-scrolling: touch;
+            }
+            .excel-table {
+              min-width: 800px; /* Ensure table doesn't get too compressed */
+            }
+            .excel-table th,
+            .excel-table td {
+              padding: 8px 4px;
+              font-size: 12px;
+            }
+            .image-cell img {
+              width: 50px;
+              height: 35px;
+            }
+            .description-cell {
+              min-width: 200px;
+            }
+            .description-cell textarea {
+              font-size: 16px; /* Prevents zoom on iOS */
+            }
+            .action-btn {
+              padding: 6px 8px;
+              font-size: 11px;
+            }
+            
+            /* Mobile bulk actions */
+            .bulk-actions-bar {
+              flex-direction: column;
+              gap: 8px;
+            }
+            .bulk-actions-bar > div {
+              width: 100%;
+            }
+            
+            /* Mobile pagination */
+            #paginationControls {
+              flex-direction: column;
+              gap: 8px;
+            }
+            #pageNumbers {
+              justify-content: center;
+            }
+            
+            /* Mobile category management */
+            #categoryModal > div {
+              width: 90vw;
+              margin: 20px;
+            }
+            
+            /* Touch improvements */
+            .category-item, .filter-item {
+              padding: 12px;
+              font-size: 16px;
+            }
+            .action-buttons {
+              gap: 8px;
+            }
+            
+            /* Mobile-specific scrolling */
+            .mobile-main {
+              -webkit-overflow-scrolling: touch;
+            }
+          }
+          
+          @media (max-width: 480px) {
+            /* Extra small screens (iPhone SE, etc.) */
+            .mobile-header h1 {
+              font-size: 1.25rem;
+            }
+            .file-preview-details {
+              padding-left: 0;
+            }
+            .file-preview-name {
+              font-size: 13px;
+            }
+            .excel-table th,
+            .excel-table td {
+              padding: 6px 3px;
+              font-size: 11px;
+            }
+          }
         </style>
     </head>
     <body class="bg-gray-50">
+        <!-- Mobile Overlay -->
+        <div id="mobileOverlay" class="mobile-overlay"></div>
+        
         <div class="flex h-screen">
             <!-- Sidebar -->
-            <div class="w-64 bg-white shadow-md p-4 overflow-y-auto">
+            <div id="sidebar" class="w-64 bg-white shadow-md p-4 overflow-y-auto mobile-sidebar">
                 <h2 class="text-lg font-semibold mb-4">
                     <i class="fas fa-folder mr-2"></i>
                     Categories
@@ -759,17 +1050,22 @@ app.get('/', (c) => {
             </div>
             
             <!-- Main Content -->
-            <div class="flex-1 flex flex-col overflow-hidden">
+            <div class="flex-1 flex flex-col overflow-hidden mobile-main">
                 <!-- Header -->
-                <div class="bg-white shadow-sm p-4">
+                <div class="bg-white shadow-sm p-4 mobile-header">
                     <div class="flex items-center justify-between">
-                        <h1 class="text-2xl font-bold text-gray-800">
-                            <i class="fas fa-chart-bar mr-2"></i>
-                            Image Chart Manager
-                        </h1>
+                        <div class="flex items-center">
+                            <button id="mobileMenuBtn" class="mobile-menu-btn mr-3">
+                                <i class="fas fa-bars"></i>
+                            </button>
+                            <h1 class="text-2xl font-bold text-gray-800">
+                                <i class="fas fa-chart-bar mr-2"></i>
+                                Image Chart Manager
+                            </h1>
+                        </div>
                         
                         <!-- Search and Controls -->
-                        <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-4 search-controls">
                             <div class="relative">
                                 <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
                                 <input type="text" id="searchInput" placeholder="Search descriptions..." 
@@ -785,7 +1081,7 @@ app.get('/', (c) => {
                 </div>
                 
                 <!-- Content Area -->
-                <div class="flex-1 p-4 overflow-hidden">
+                <div class="flex-1 p-4 overflow-y-auto">
         <div class="max-w-full">
             <h1 class="text-3xl font-bold text-gray-800 mb-6">
                 <i class="fas fa-chart-bar mr-2"></i>
@@ -873,7 +1169,7 @@ app.get('/', (c) => {
                     </div>
                 </div>
 
-                <div class="overflow-auto" style="max-height: 70vh;">
+                <div class="overflow-auto table-container" style="max-height: 70vh;">
                     <table class="excel-table">
                         <thead>
                             <tr>
@@ -974,6 +1270,44 @@ app.get('/', (c) => {
         <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
         <script src="/static/app.js"></script>
+        
+        <!-- Mobile Menu JavaScript -->
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('mobileOverlay');
+            
+            function toggleMobileMenu() {
+                sidebar.classList.toggle('open');
+                overlay.classList.toggle('show');
+                document.body.style.overflow = sidebar.classList.contains('open') ? 'hidden' : '';
+            }
+            
+            function closeMobileMenu() {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('show');
+                document.body.style.overflow = '';
+            }
+            
+            mobileMenuBtn?.addEventListener('click', toggleMobileMenu);
+            overlay?.addEventListener('click', closeMobileMenu);
+            
+            // Close menu when clicking sidebar links on mobile
+            sidebar?.addEventListener('click', function(e) {
+                if (window.innerWidth <= 768 && e.target.closest('.category-item')) {
+                    setTimeout(closeMobileMenu, 300);
+                }
+            });
+            
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                if (window.innerWidth > 768) {
+                    closeMobileMenu();
+                }
+            });
+        });
+        </script>
     </body>
     </html>
   `)

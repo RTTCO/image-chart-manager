@@ -121,6 +121,12 @@ class ImageChartManager {
                             <div class="file-preview-name">${file.name}</div>
                             <div class="file-preview-size">${this.formatFileSize(file.size)}</div>
                             <textarea class="description-input" placeholder="Enter description for this image..." data-index="${index}"></textarea>
+                            <div class="category-selection mt-2">
+                                <label class="text-sm font-medium text-gray-600">Category:</label>
+                                <select class="category-input w-full mt-1 text-sm p-2 border border-gray-300 rounded" data-index="${index}">
+                                    ${this.renderCategoryOptions()}
+                                </select>
+                            </div>
                         </div>
                     </div>
                     <button class="remove-file-btn" data-index="${index}">
@@ -175,17 +181,25 @@ class ImageChartManager {
 
         const formData = new FormData();
         const descriptions = [];
+        const categoryIds = [];
 
-        // Add files and collect descriptions
+        // Add files and collect descriptions and categories
         this.selectedFiles.forEach((file, index) => {
             formData.append('images', file);
             const descInput = document.querySelector(`textarea[data-index="${index}"]`);
+            const categorySelect = document.querySelector(`select[data-index="${index}"]`);
             descriptions.push(descInput ? descInput.value.trim() : '');
+            categoryIds.push(categorySelect ? categorySelect.value || null : null);
         });
 
         // Add descriptions
         descriptions.forEach(desc => {
             formData.append('descriptions', desc);
+        });
+        
+        // Add category IDs
+        categoryIds.forEach(categoryId => {
+            formData.append('categoryIds', categoryId || '');
         });
 
         try {
