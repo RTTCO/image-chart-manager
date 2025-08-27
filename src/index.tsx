@@ -244,7 +244,14 @@ app.post('/api/upload', async (c) => {
 
       // Convert to base64 for database storage
       const arrayBuffer = await file.arrayBuffer()
-      const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+      const uint8Array = new Uint8Array(arrayBuffer)
+      
+      // Convert to base64 without using spread operator (prevents stack overflow)
+      let binaryString = ''
+      for (let i = 0; i < uint8Array.length; i++) {
+        binaryString += String.fromCharCode(uint8Array[i])
+      }
+      const base64Data = btoa(binaryString)
 
       // Get next row order
       const { results: maxOrderResult } = await c.env.DB.prepare(
