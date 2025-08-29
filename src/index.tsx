@@ -170,8 +170,8 @@ app.get('/api/images', async (c) => {
     }
     
     if (search) {
-      conditions.push('(ie.description LIKE ? OR ie.original_name LIKE ?)')
-      params.push(`%${search}%`, `%${search}%`)
+      conditions.push('(ie.description LIKE ? OR ie.original_name LIKE ? OR ie.theme LIKE ?)')
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`)
     }
     
     if (conditions.length > 0) {
@@ -216,6 +216,7 @@ app.post('/api/upload', async (c) => {
     const files = body.getAll('images') as File[]
     const descriptions = body.getAll('descriptions') as string[]
     const categoryIds = body.getAll('categoryIds') as string[]
+    const themes = body.getAll('themes') as string[]
     
     if (!files || files.length === 0) {
       return c.json({ success: false, error: 'No files uploaded' }, 400)
@@ -227,6 +228,7 @@ app.post('/api/upload', async (c) => {
       const file = files[i]
       const description = descriptions[i] || ''
       const categoryId = categoryIds[i] && categoryIds[i] !== '' ? parseInt(categoryIds[i]) : null
+      const theme = themes[i] || ''
       
       if (!(file instanceof File)) continue
 
@@ -261,9 +263,9 @@ app.post('/api/upload', async (c) => {
 
       // Save metadata and base64 data to D1
       const result = await c.env.DB.prepare(`
-        INSERT INTO image_entries (filename, original_name, file_size, mime_type, description, row_order, image_data, category_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(filename, file.name, file.size, file.type, description, nextOrder, base64Data, categoryId).run()
+        INSERT INTO image_entries (filename, original_name, file_size, mime_type, description, row_order, image_data, category_id, theme)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(filename, file.name, file.size, file.type, description, nextOrder, base64Data, categoryId, theme).run()
 
       uploadedFiles.push({
         id: result.meta.last_row_id,
@@ -273,7 +275,8 @@ app.post('/api/upload', async (c) => {
         mime_type: file.type,
         description,
         row_order: nextOrder,
-        category_id: categoryId
+        category_id: categoryId,
+        theme
       })
     }
 
@@ -288,7 +291,7 @@ app.post('/api/upload', async (c) => {
 app.put('/api/images/:id', async (c) => {
   try {
     const id = c.req.param('id')
-    const { description, category_id, status } = await c.req.json()
+    const { description, category_id, status, theme } = await c.req.json()
 
     let updateFields = []
     let params = []
@@ -306,6 +309,11 @@ app.put('/api/images/:id', async (c) => {
     if (status !== undefined) {
       updateFields.push('status = ?')
       params.push(status)
+    }
+    
+    if (theme !== undefined) {
+      updateFields.push('theme = ?')
+      params.push(theme)
     }
     
     if (updateFields.length === 0) {
@@ -541,6 +549,34 @@ app.get('/', (c) => {
           .description-cell.error {
             background-color: #fef2f2;
           }
+          .theme-cell.editing {
+            background-color: #eff6ff;
+          }
+          .theme-cell.saving {
+            background-color: #f0fdf4;
+          }
+          .theme-cell.error {
+            background-color: #fef2f2;
+          }
+          .category-cell.editing {
+            background-color: #eff6ff;
+          }
+          .category-cell.saving {
+            background-color: #f0fdf4;
+          }
+          .category-cell.error {
+            background-color: #fef2f2;
+          }
+          .readonly-content {
+            min-height: 40px;
+            padding: 6px;
+            line-height: 1.3;
+            color: #374151;
+          }
+          .readonly-content .text-gray-400 {
+            color: #9ca3af;
+            font-style: italic;
+          }
           .action-buttons {
             display: flex;
             gap: 4px;
@@ -561,12 +597,32 @@ app.get('/', (c) => {
           .action-btn.edit:hover {
             background: #2563eb;
           }
+          .action-btn.edit.save-mode {
+            background: #10b981;
+          }
+          .action-btn.edit.save-mode:hover {
+            background: #059669;
+          }
           .action-btn.delete {
             background: #ef4444;
             color: white;
           }
           .action-btn.delete:hover {
             background: #dc2626;
+          }
+          .action-btn.edit-theme {
+            background: #8b5cf6;
+            color: white;
+          }
+          .action-btn.edit-theme:hover {
+            background: #7c3aed;
+          }
+          .action-btn.edit-category {
+            background: #f59e0b;
+            color: white;
+          }
+          .action-btn.edit-category:hover {
+            background: #d97706;
           }
           .action-btn.save {
             background: #10b981;
@@ -1186,6 +1242,7 @@ app.get('/', (c) => {
                                 <th style="width: 30px;">#</th>
                                 <th style="width: 80px;">Image</th>
                                 <th style="width: auto;">Description</th>
+                                <th style="width: 100px;">Theme</th>
                                 <th style="width: 100px;">Category</th>
                                 <th style="width: 80px;">Size</th>
                                 <th style="width: 100px;">Date</th>
@@ -1194,7 +1251,7 @@ app.get('/', (c) => {
                         </thead>
                         <tbody id="imageTableBody">
                             <tr>
-                                <td colspan="8" class="text-center py-8 text-gray-500">
+                                <td colspan="9" class="text-center py-8 text-gray-500">
                                     <i class="fas fa-image text-3xl mb-2"></i>
                                     <p>No images uploaded yet. Upload some images to get started!</p>
                                 </td>
@@ -1258,10 +1315,6 @@ app.get('/', (c) => {
         <!-- Context Menu -->
         <div id="contextMenu" class="context-menu">
             <ul>
-                <li id="editItem">
-                    <i class="fas fa-edit mr-2"></i>
-                    Edit Description
-                </li>
                 <li id="downloadItem">
                     <i class="fas fa-download mr-2"></i>
                     Download Image

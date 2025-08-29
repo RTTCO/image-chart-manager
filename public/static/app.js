@@ -83,7 +83,7 @@ class ImageChartManager {
         // Context menu
         document.addEventListener('contextmenu', (e) => this.handleContextMenu(e));
         document.addEventListener('click', () => this.hideContextMenu());
-        document.getElementById('editItem')?.addEventListener('click', () => this.editDescriptionFromContext());
+        // Removed editItem as we now use action buttons for editing
         document.getElementById('downloadItem')?.addEventListener('click', () => this.downloadImage());
         document.getElementById('deleteRowItem')?.addEventListener('click', () => this.deleteRowFromContext());
     }
@@ -121,6 +121,11 @@ class ImageChartManager {
                             <div class="file-preview-name">${file.name}</div>
                             <div class="file-preview-size">${this.formatFileSize(file.size)}</div>
                             <textarea class="description-input" placeholder="Enter description for this image..." data-index="${index}"></textarea>
+                            <div class="theme-selection mt-2">
+                                <label class="text-sm font-medium text-gray-600">Theme:</label>
+                                <input type="text" class="theme-input w-full mt-1 text-sm p-2 border border-gray-300 rounded" 
+                                       placeholder="Enter theme (e.g., nature, business, portrait)" data-index="${index}">
+                            </div>
                             <div class="category-selection mt-2">
                                 <label class="text-sm font-medium text-gray-600">Category:</label>
                                 <select class="category-input w-full mt-1 text-sm p-2 border border-gray-300 rounded" data-index="${index}">
@@ -182,6 +187,7 @@ class ImageChartManager {
         const formData = new FormData();
         const descriptions = [];
         const categoryIds = [];
+        const themes = [];
 
         // Compress and add files
         for (let index = 0; index < this.selectedFiles.length; index++) {
@@ -195,8 +201,11 @@ class ImageChartManager {
             
             const descInput = document.querySelector(`textarea[data-index="${index}"]`);
             const categorySelect = document.querySelector(`select[data-index="${index}"]`);
+            const themeInput = document.querySelector(`input.theme-input[data-index="${index}"]`);
+            
             descriptions.push(descInput ? descInput.value.trim() : '');
             categoryIds.push(categorySelect ? categorySelect.value || null : null);
+            themes.push(themeInput ? themeInput.value.trim() : '');
         }
 
         // Add descriptions
@@ -208,6 +217,11 @@ class ImageChartManager {
         categoryIds.forEach(categoryId => {
             formData.append('categoryIds', categoryId || '');
         });
+        
+        // Add themes
+        themes.forEach(theme => {
+            formData.append('themes', theme);
+        });
 
         try {
             this.showProgress(true);
@@ -218,6 +232,7 @@ class ImageChartManager {
                 fileCount: this.selectedFiles.length,
                 descriptions: descriptions,
                 categoryIds: categoryIds,
+                themes: themes,
                 isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
             });
             
@@ -306,7 +321,7 @@ class ImageChartManager {
         if (images.length === 0) {
             tbody.innerHTML = `
                 <tr>
-                    <td colspan="8" class="text-center py-8 text-gray-500">
+                    <td colspan="9" class="text-center py-8 text-gray-500">
                         <i class="fas fa-image text-3xl mb-2"></i>
                         <p>No images found. Try adjusting your filters or upload some images!</p>
                     </td>
@@ -328,16 +343,37 @@ class ImageChartManager {
                          data-image-id="${image.id}">
                 </td>
                 <td class="description-cell" data-image-id="${image.id}">
-                    <textarea data-image-id="${image.id}" 
+                    <div class="readonly-content" data-image-id="${image.id}">
+                        ${image.description || '<span class="text-gray-400">No description</span>'}
+                    </div>
+                    <textarea class="edit-textarea hidden" data-image-id="${image.id}" 
                               data-original-value="${this.escapeHtml(image.description || '')}"
                               placeholder="Enter description..."
                               onkeydown="imageManager.handleTextareaKeydown(event, ${image.id})"
-                              onfocus="imageManager.startEditing(${image.id})"
-                              onblur="imageManager.saveDescription(${image.id}, this)">${image.description || ''}</textarea>
+                              onblur="imageManager.handleBlur(${image.id}, 'description', this)">${image.description || ''}</textarea>
                 </td>
-                <td>
-                    <select class="category-select text-xs p-1 border border-gray-300 rounded w-full" 
-                            onchange="imageManager.updateCategory(${image.id}, this.value)">
+                <td class="theme-cell" data-image-id="${image.id}">
+                    <div class="readonly-content" data-image-id="${image.id}">
+                        ${image.theme || '<span class="text-gray-400">No theme</span>'}
+                    </div>
+                    <input type="text" 
+                           class="edit-input hidden text-xs p-1 border border-gray-300 rounded w-full"
+                           value="${this.escapeHtml(image.theme || '')}"
+                           data-image-id="${image.id}"
+                           data-original-value="${this.escapeHtml(image.theme || '')}"
+                           placeholder="Enter theme..."
+                           onkeydown="imageManager.handleThemeKeydown(event, ${image.id})"
+                           onblur="imageManager.handleBlur(${image.id}, 'theme', this)">
+                </td>
+                <td class="category-cell" data-image-id="${image.id}">
+                    <div class="readonly-content" data-image-id="${image.id}">
+                        <span class="category-badge" style="background-color: ${image.category_color || '#6b7280'}">
+                            ${image.category_name || 'Uncategorized'}
+                        </span>
+                    </div>
+                    <select class="edit-select hidden text-xs p-1 border border-gray-300 rounded w-full" 
+                            data-image-id="${image.id}"
+                            onchange="imageManager.handleCategoryChange(${image.id}, this)">
                         ${this.renderCategoryOptions(image.category_id)}
                     </select>
                 </td>
@@ -350,10 +386,10 @@ class ImageChartManager {
                     <div class="text-xs text-gray-500">${new Date(image.upload_date).toLocaleTimeString()}</div>
                 </td>
                 <td class="action-buttons">
-                    <button class="action-btn edit" onclick="imageManager.editDescription(${image.id})" title="Edit Description">
+                    <button class="action-btn edit" onclick="imageManager.toggleEdit(${image.id})" title="Edit Row" data-image-id="${image.id}">
                         <i class="fas fa-edit"></i>
                     </button>
-                    <button class="action-btn delete" onclick="imageManager.deleteRow(${image.id})" title="Delete Row">
+                    <button class="action-btn delete hidden" onclick="imageManager.deleteRow(${image.id})" title="Delete Row" data-image-id="${image.id}">
                         <i class="fas fa-trash"></i>
                     </button>
                 </td>
@@ -371,24 +407,29 @@ class ImageChartManager {
 
     handleTextareaKeydown(event, imageId) {
         if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-            // Ctrl/Cmd + Enter to save
+            // Ctrl/Cmd + Enter to save all changes
             event.preventDefault();
-            const textarea = event.target;
-            this.saveDescription(imageId, textarea);
-            textarea.blur();
+            this.saveAllChanges(imageId);
         } else if (event.key === 'Escape') {
-            // Escape to cancel
+            // Escape to cancel all editing
             event.preventDefault();
-            const textarea = event.target;
-            const originalValue = textarea.dataset.originalValue || '';
-            textarea.value = originalValue;
-            this.cancelEditing(imageId);
-            textarea.blur();
+            this.cancelAllEditing(imageId);
         }
+    }
+
+    handleBlur(imageId, field, element) {
+        // Don't auto-save on blur anymore - only save when edit button is clicked
+        // This prevents accidental saves when clicking elsewhere
+    }
+
+    handleCategoryChange(imageId, select) {
+        // Don't auto-save on change - only save when edit button is clicked
+        // This allows users to change category without immediately saving
     }
 
     async saveDescription(imageId, textarea) {
         const cell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const readonly = cell.querySelector('.readonly-content');
         const description = textarea.value.trim();
         
         try {
@@ -402,6 +443,14 @@ class ImageChartManager {
             if (response.data.success) {
                 // Update the original value for future cancellations
                 textarea.dataset.originalValue = this.escapeHtml(description);
+                
+                // Update readonly display
+                readonly.innerHTML = description || '<span class="text-gray-400">No description</span>';
+                
+                // Switch back to readonly mode
+                textarea.classList.add('hidden');
+                readonly.classList.remove('hidden');
+                
                 cell.classList.remove('saving');
                 
                 // Show brief success feedback
@@ -429,18 +478,332 @@ class ImageChartManager {
         }
     }
 
+    cancelAllEditing(imageId) {
+        const descCell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const themeCell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const categoryCell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        
+        // Reset all fields to original values
+        const descTextarea = descCell.querySelector('.edit-textarea');
+        const themeInput = themeCell.querySelector('.edit-input');
+        const categorySelect = categoryCell.querySelector('.edit-select');
+        
+        const descOriginal = descTextarea.dataset.originalValue || '';
+        const themeOriginal = themeInput.dataset.originalValue || '';
+        
+        descTextarea.value = descOriginal;
+        themeInput.value = themeOriginal;
+        
+        // Exit edit mode without saving (this will also hide delete button)
+        this.exitEditMode(imageId);
+    }
+
     cancelEditing(imageId) {
         const cell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
-        if (cell) {
+        const readonly = cell.querySelector('.readonly-content');
+        const textarea = cell.querySelector('.edit-textarea');
+        
+        if (cell && readonly && textarea) {
+            // Reset to original value
+            const originalValue = textarea.dataset.originalValue || '';
+            textarea.value = originalValue;
+            
+            // Switch back to readonly mode
+            textarea.classList.add('hidden');
+            readonly.classList.remove('hidden');
+            
             cell.classList.remove('editing', 'saving', 'error');
         }
     }
 
-    editDescription(imageId) {
-        const textarea = document.querySelector(`textarea[data-image-id="${imageId}"]`);
-        if (textarea) {
-            textarea.focus();
-            textarea.select();
+    toggleEdit(imageId) {
+        const editBtn = document.querySelector(`button.action-btn.edit[data-image-id="${imageId}"]`);
+        const descCell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const themeCell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const categoryCell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        
+        // Check if currently in edit mode
+        const isEditing = descCell.classList.contains('editing');
+        
+        if (isEditing) {
+            // Save all changes and exit edit mode
+            this.saveAllChanges(imageId);
+        } else {
+            // Enter edit mode for all fields
+            this.enterEditMode(imageId);
+        }
+    }
+
+    enterEditMode(imageId) {
+        const editBtn = document.querySelector(`button.action-btn.edit[data-image-id="${imageId}"]`);
+        const deleteBtn = document.querySelector(`button.action-btn.delete[data-image-id="${imageId}"]`);
+        
+        // Update button appearance
+        editBtn.innerHTML = '<i class="fas fa-save"></i>';
+        editBtn.title = 'Save Changes';
+        editBtn.classList.add('save-mode');
+        
+        // Show delete button
+        deleteBtn.classList.remove('hidden');
+        
+        // Enable editing for description
+        const descCell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const descReadonly = descCell.querySelector('.readonly-content');
+        const descTextarea = descCell.querySelector('.edit-textarea');
+        
+        descReadonly.classList.add('hidden');
+        descTextarea.classList.remove('hidden');
+        descCell.classList.add('editing');
+        
+        // Enable editing for theme
+        const themeCell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const themeReadonly = themeCell.querySelector('.readonly-content');
+        const themeInput = themeCell.querySelector('.edit-input');
+        
+        themeReadonly.classList.add('hidden');
+        themeInput.classList.remove('hidden');
+        themeCell.classList.add('editing');
+        
+        // Enable editing for category
+        const categoryCell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        const categoryReadonly = categoryCell.querySelector('.readonly-content');
+        const categorySelect = categoryCell.querySelector('.edit-select');
+        
+        categoryReadonly.classList.add('hidden');
+        categorySelect.classList.remove('hidden');
+        categoryCell.classList.add('editing');
+        
+        // Focus on description field
+        descTextarea.focus();
+        descTextarea.select();
+    }
+
+    async saveAllChanges(imageId) {
+        const editBtn = document.querySelector(`button.action-btn.edit[data-image-id="${imageId}"]`);
+        const descCell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const themeCell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const categoryCell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        
+        // Get values
+        const descTextarea = descCell.querySelector('.edit-textarea');
+        const themeInput = themeCell.querySelector('.edit-input');
+        const categorySelect = categoryCell.querySelector('.edit-select');
+        
+        const description = descTextarea.value.trim();
+        const theme = themeInput.value.trim();
+        const categoryId = categorySelect.value || null;
+        
+        try {
+            // Show saving state
+            editBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            editBtn.title = 'Saving...';
+            descCell.classList.add('saving');
+            themeCell.classList.add('saving');
+            categoryCell.classList.add('saving');
+            
+            // Save all changes in one API call
+            const response = await axios.put(`/api/images/${imageId}`, {
+                description: description,
+                theme: theme,
+                category_id: categoryId
+            });
+
+            if (response.data.success) {
+                // Update all readonly displays
+                this.updateReadonlyDisplays(imageId, description, theme, categorySelect);
+                
+                // Update original values
+                descTextarea.dataset.originalValue = this.escapeHtml(description);
+                themeInput.dataset.originalValue = this.escapeHtml(theme);
+                
+                // Exit edit mode
+                this.exitEditMode(imageId);
+                
+                // Refresh category counts if category changed
+                this.loadCategories();
+                
+            } else {
+                throw new Error(response.data.error || 'Failed to update');
+            }
+        } catch (error) {
+            console.error('Update error:', error);
+            
+            // Reset to original values on error
+            const descOriginal = descTextarea.dataset.originalValue || '';
+            const themeOriginal = themeInput.dataset.originalValue || '';
+            descTextarea.value = descOriginal;
+            themeInput.value = themeOriginal;
+            
+            // Show error state
+            descCell.classList.add('error');
+            themeCell.classList.add('error');
+            categoryCell.classList.add('error');
+            
+            this.showMessage('Failed to save changes. Values reverted.', 'error');
+            
+            // Remove error state after 3 seconds
+            setTimeout(() => {
+                descCell.classList.remove('error');
+                themeCell.classList.remove('error');
+                categoryCell.classList.remove('error');
+            }, 3000);
+            
+            // Reset button
+            editBtn.innerHTML = '<i class="fas fa-save"></i>';
+            editBtn.title = 'Save Changes';
+        } finally {
+            descCell.classList.remove('saving');
+            themeCell.classList.remove('saving');
+            categoryCell.classList.remove('saving');
+        }
+    }
+
+    updateReadonlyDisplays(imageId, description, theme, categorySelect) {
+        const descCell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const themeCell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const categoryCell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        
+        // Update description display
+        const descReadonly = descCell.querySelector('.readonly-content');
+        descReadonly.innerHTML = description || '<span class="text-gray-400">No description</span>';
+        
+        // Update theme display
+        const themeReadonly = themeCell.querySelector('.readonly-content');
+        themeReadonly.innerHTML = theme || '<span class="text-gray-400">No theme</span>';
+        
+        // Update category display
+        const categoryReadonly = categoryCell.querySelector('.readonly-content');
+        const selectedOption = categorySelect.options[categorySelect.selectedIndex];
+        const categoryName = selectedOption.text;
+        const categoryColor = selectedOption.dataset.color || '#6b7280';
+        categoryReadonly.innerHTML = `<span class="category-badge" style="background-color: ${categoryColor}">${categoryName}</span>`;
+    }
+
+    exitEditMode(imageId) {
+        const editBtn = document.querySelector(`button.action-btn.edit[data-image-id="${imageId}"]`);
+        const deleteBtn = document.querySelector(`button.action-btn.delete[data-image-id="${imageId}"]`);
+        const descCell = document.querySelector(`td.description-cell[data-image-id="${imageId}"]`);
+        const themeCell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const categoryCell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        
+        // Reset button
+        editBtn.innerHTML = '<i class="fas fa-edit"></i>';
+        editBtn.title = 'Edit Row';
+        editBtn.classList.remove('save-mode');
+        
+        // Hide delete button
+        deleteBtn.classList.add('hidden');
+        
+        // Switch all fields back to readonly
+        const descReadonly = descCell.querySelector('.readonly-content');
+        const descTextarea = descCell.querySelector('.edit-textarea');
+        const themeReadonly = themeCell.querySelector('.readonly-content');
+        const themeInput = themeCell.querySelector('.edit-input');
+        const categoryReadonly = categoryCell.querySelector('.readonly-content');
+        const categorySelect = categoryCell.querySelector('.edit-select');
+        
+        // Description
+        descTextarea.classList.add('hidden');
+        descReadonly.classList.remove('hidden');
+        descCell.classList.remove('editing');
+        
+        // Theme
+        themeInput.classList.add('hidden');
+        themeReadonly.classList.remove('hidden');
+        themeCell.classList.remove('editing');
+        
+        // Category
+        categorySelect.classList.add('hidden');
+        categoryReadonly.classList.remove('hidden');
+        categoryCell.classList.remove('editing');
+    }
+
+    startEditingTheme(imageId) {
+        const cell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        if (cell) {
+            cell.classList.add('editing');
+            cell.classList.remove('saving', 'error');
+        }
+    }
+
+    handleThemeKeydown(event, imageId) {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            // Ctrl/Cmd + Enter to save all changes
+            event.preventDefault();
+            this.saveAllChanges(imageId);
+        } else if (event.key === 'Escape') {
+            // Escape to cancel all editing
+            event.preventDefault();
+            this.cancelAllEditing(imageId);
+        }
+    }
+
+    async saveTheme(imageId, input) {
+        const cell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const readonly = cell.querySelector('.readonly-content');
+        const theme = input.value.trim();
+        
+        try {
+            cell.classList.remove('editing');
+            cell.classList.add('saving');
+            
+            const response = await axios.put(`/api/images/${imageId}`, {
+                theme: theme
+            });
+
+            if (response.data.success) {
+                // Update the original value for future cancellations
+                input.dataset.originalValue = this.escapeHtml(theme);
+                
+                // Update readonly display
+                readonly.innerHTML = theme || '<span class="text-gray-400">No theme</span>';
+                
+                // Switch back to readonly mode
+                input.classList.add('hidden');
+                readonly.classList.remove('hidden');
+                
+                cell.classList.remove('saving');
+                
+                // Show brief success feedback
+                setTimeout(() => {
+                    cell.classList.remove('saving');
+                }, 500);
+            } else {
+                throw new Error(response.data.error || 'Failed to update');
+            }
+        } catch (error) {
+            console.error('Update theme error:', error);
+            cell.classList.remove('saving');
+            cell.classList.add('error');
+            
+            // Reset to original value on error
+            const originalValue = input.dataset.originalValue || '';
+            input.value = originalValue;
+            
+            this.showMessage('Failed to update theme. Changes reverted.', 'error');
+            
+            // Remove error state after 3 seconds
+            setTimeout(() => {
+                cell.classList.remove('error');
+            }, 3000);
+        }
+    }
+
+    cancelEditingTheme(imageId) {
+        const cell = document.querySelector(`td.theme-cell[data-image-id="${imageId}"]`);
+        const readonly = cell.querySelector('.readonly-content');
+        const input = cell.querySelector('.edit-input');
+        
+        if (cell && readonly && input) {
+            // Reset to original value
+            const originalValue = input.dataset.originalValue || '';
+            input.value = originalValue;
+            
+            // Switch back to readonly mode
+            input.classList.add('hidden');
+            readonly.classList.remove('hidden');
+            
+            cell.classList.remove('editing', 'saving', 'error');
         }
     }
 
@@ -689,29 +1052,52 @@ class ImageChartManager {
     }
 
     renderCategoryOptions(selectedId) {
-        let options = '<option value="">No Category</option>';
+        let options = '<option value="" data-color="#6b7280">Uncategorized</option>';
         this.categories.forEach(category => {
             const selected = category.id == selectedId ? 'selected' : '';
-            options += `<option value="${category.id}" ${selected}>${category.name}</option>`;
+            options += `<option value="${category.id}" data-color="${category.color}" ${selected}>${category.name}</option>`;
         });
         return options;
     }
 
     async updateCategory(imageId, categoryId) {
+        const cell = document.querySelector(`td.category-cell[data-image-id="${imageId}"]`);
+        const readonly = cell.querySelector('.readonly-content');
+        const select = cell.querySelector('.edit-select');
+        
         try {
+            cell.classList.add('saving');
+            
             const response = await axios.put(`/api/images/${imageId}`, {
                 category_id: categoryId || null
             });
 
             if (response.data.success) {
+                // Find the selected category info
+                const selectedOption = select.options[select.selectedIndex];
+                const categoryName = selectedOption.text;
+                const categoryColor = selectedOption.dataset.color || '#6b7280';
+                
+                // Update readonly display
+                readonly.innerHTML = `<span class="category-badge" style="background-color: ${categoryColor}">${categoryName}</span>`;
+                
+                // Switch back to readonly mode
+                select.classList.add('hidden');
+                readonly.classList.remove('hidden');
+                cell.classList.remove('editing');
+                
                 // Refresh category counts
                 this.loadCategories();
+                
+                cell.classList.remove('saving');
             } else {
                 this.showMessage('Failed to update category', 'error');
+                cell.classList.remove('saving');
             }
         } catch (error) {
             console.error('Update category error:', error);
             this.showMessage('Failed to update category', 'error');
+            cell.classList.remove('saving');
         }
     }
 
