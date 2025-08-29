@@ -6,9 +6,9 @@
 - **Features**: Theme-based organization, bulk upload, safe single-button editing, category management, mobile optimization
 
 ## URLs
-- **Production**: https://a6910f5b.imageref.pages.dev
+- **Production**: https://imageref.pages.dev
 - **GitHub**: https://github.com/RTTCO/image-chart-manager
-- **API Health Check**: https://a6910f5b.imageref.pages.dev/api/categories
+- **API Health Check**: https://imageref.pages.dev/api/categories
 
 ## Currently Completed Features
 
@@ -156,8 +156,8 @@ categories (
 - **Database**: Theme migration applied to production
 
 ### Production URLs
-- **Main App**: https://a6910f5b.imageref.pages.dev
-- **API Test**: https://a6910f5b.imageref.pages.dev/api/categories
+- **Main App**: https://imageref.pages.dev
+- **API Test**: https://imageref.pages.dev/api/categories
 - **GitHub**: https://github.com/RTTCO/image-chart-manager
 
 ### Local Development Commands
